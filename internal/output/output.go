@@ -67,7 +67,8 @@ func (p *Printer) Table(headers []string, rows [][]string) {
 		}
 	default:
 		table := tablewriter.NewWriter(p.w)
-		// Convert string headers to []any for the new API
+		// tablewriter v1.x Header/Append methods accept variadic any; convert
+		// string slices to []any before unpacking.
 		hdr := make([]any, len(headers))
 		for i, h := range headers {
 			hdr[i] = h
