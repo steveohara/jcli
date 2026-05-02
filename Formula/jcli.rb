@@ -9,24 +9,24 @@ class Jcli < Formula
   on_macos do
     on_intel do
       url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-darwin-amd64.tar.gz"
-      sha256 "4810a11184b817c5a230fae8485828e858eb76d792a66529ebcb385f5c0f1098"
+      sha256 "e4e0badc713b3368687c543fe7ae3c814ff5aa2216f1381abfe6cebf3f5da49a"
     end
 
     on_arm do
       url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-darwin-arm64.tar.gz"
-      sha256 "99b4faaacda4f6c6243156e7bfca19ea53515da31f7e6e39b9bd36d05c7d45b8"
+      sha256 "a6d8bef5dca662386c0eee8979eebb869ca8c209064556effe6de98a3bb571ca"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-linux-amd64.tar.gz"
-      sha256 "2d6994bf1d548c264abcb0fe8fc9021f599bf1e1e3cafb43e4cb33768c70a5a2"
+      sha256 "62de8cd6ccb5dd96a7b6ffdecbf7d94a280c728a9bfdc853501f4bcea7789fa7"
     end
 
     on_arm do
       url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-linux-arm64.tar.gz"
-      sha256 "a4f2ec6c384f1a2aea25d5af35a578401875076c98397b7166fb16feb9c02054"
+      sha256 "dbe1c9139e6427c7f90242afb501b2953230bc849e7f3afbe937ffef232b4303"
     end
   end
 
