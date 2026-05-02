@@ -12,6 +12,9 @@ written in Go.
 
 1. [Features](#features)
 2. [Installation](#installation)
+   - [Homebrew (macOS and Linux)](#homebrew-macos-and-linux)
+   - [Windows](#windows)
+   - [Build from source](#build-from-source)
 3. [Configuration](#configuration)
 4. [Global Flags](#global-flags)
 5. [Command Reference](#command-reference)
@@ -68,11 +71,73 @@ Additional capabilities:
 brew install steveohara/jcli/jcli
 ```
 
+After installation, Homebrew will display a message showing how to activate the
+bundled Jira agent skill for AI tools. To do it manually:
+
+```bash
+mkdir -p ~/.agents/skills/jira
+ln -sf "$(brew --prefix)/share/jcli/SKILL.md" ~/.agents/skills/jira/SKILL.md
+```
+
+This symlinks the skill into the global discovery path used by
+[OpenCode](https://opencode.ai) and other compatible AI agent tools. Once
+linked, any agent session — regardless of which project you are working in —
+can use the skill to interact with Jira via `jcli`.
+
 To update to the latest release:
 
 ```bash
 brew upgrade steveohara/jcli/jcli
 ```
+
+The symlink points to the Homebrew-managed file, so upgrading automatically
+picks up the updated skill without relinking.
+
+### Windows
+
+#### Pre-built binary
+
+Download the latest `jcli-vX.Y.Z-windows-amd64.exe` from the
+[Releases](https://github.com/steveohara/jcli/releases/latest) page, rename it
+to `jcli.exe`, and move it to a directory on your `PATH` (e.g.
+`C:\Users\<you>\bin\`).
+
+To verify the installation, open a new Command Prompt or PowerShell window and run:
+
+```powershell
+jcli --version
+```
+
+#### Scoop
+
+If you use [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add steveohara https://github.com/steveohara/jcli
+scoop install jcli
+```
+
+To update:
+
+```powershell
+scoop update jcli
+```
+
+#### Agent skill on Windows
+
+After placing `jcli.exe` on your `PATH`, activate the skill for AI agent tools
+by copying `SKILL.md` from the release archive into the global discovery path.
+
+Using PowerShell:
+
+```powershell
+# Extract SKILL.md from the release zip/tarball, then:
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills\jira"
+Copy-Item "SKILL.md" "$env:USERPROFILE\.agents\skills\jira\SKILL.md"
+```
+
+> **Note**: Windows does not support the `~/.agents/skills/` symlink approach
+> used on macOS/Linux. Copy the file instead, and re-copy it after each upgrade.
 
 ### Build from source
 
@@ -83,6 +148,9 @@ go build -o jcli .
 # Optional: install to $GOPATH/bin
 go install .
 ```
+
+On Windows, the output binary will be `jcli.exe`. Use `go build -o jcli.exe .`
+to make this explicit.
 
 ### Requirements
 
@@ -858,18 +926,66 @@ jcli user myself --output json | jq -r '.accountId'
 
 ## AI Agent Skill
 
-An [OpenCode](https://opencode.ai) / agent skill definition is included at
+A skill definition for [OpenCode](https://opencode.ai) and compatible AI agent
+tools is bundled with `jcli` at
 [`.agents/skills/jira/SKILL.md`](.agents/skills/jira/SKILL.md).
 
-The skill teaches AI coding agents how to use `jcli` for the full range of
-Jira tasks: searching and managing issues, CRUD operations, sprint board
-interactions, custom field inspection, workflow transitions, and metadata
-discovery.
+### What the skill does
 
-**Automatic discovery**: any agent tool that supports the `~/.agents/skills/`
-or `.agents/skills/` convention (including OpenCode) will pick up the skill
-automatically when working inside this repository, or if the skill directory
-is installed globally.
+The skill is a structured reference document that teaches an AI agent how to
+use `jcli` effectively. Once loaded, the agent can:
+
+- **Find and inspect projects** — list all visible projects, retrieve full
+  project details, and manage versions and components.
+- **Search issues with JQL** — construct and execute Jira Query Language
+  queries with pagination, field selection, and full-page fetches; covering
+  common patterns like open sprints, assignee filters, date ranges, and custom
+  field expressions (`cf[<id>]`).
+- **Full issue CRUD** — create issues with all supported fields (type,
+  priority, labels, components, fix versions, parent, due date); update
+  individual fields without touching others; delete issues with or without
+  sub-tasks.
+- **View and control issue detail** — fetch a single issue with selective field
+  projection or a full JSON dump including empty/null values; understand how to
+  surface custom field values and map their IDs to human-readable names.
+- **Workflow transitions** — list the available transitions for any issue and
+  apply them by ID, optionally setting a resolution.
+- **Sprint board interactions** — list boards, view active/future/closed
+  sprints, inspect all issues in a sprint, create new sprints with goals and
+  dates, and advance sprint state (`future → active → closed`).
+- **Collaboration features** — add, update and delete comments; assign and
+  unassign issues; manage watchers; cast and remove votes; create and delete
+  issue links; upload and delete attachments.
+- **Time tracking** — list, add and delete work log entries using Jira's time
+  notation (`2h`, `30m`, `1d 4h`).
+- **Metadata discovery** — enumerate all issue types, priorities, workflow
+  statuses, and field definitions (system and custom) so the agent always uses
+  valid values in commands.
+- **Common workflow recipes** — daily standup queries, triage searches,
+  multi-page JSON exports, bulk scripting patterns, and custom field
+  inspection pipelines using `--output json`.
+
+### Discovery and activation
+
+The skill is picked up automatically based on where it lives:
+
+| Location | When it is active |
+|----------|------------------|
+| `~/.agents/skills/jira/SKILL.md` | All agent sessions on the machine (global) |
+| `.agents/skills/jira/SKILL.md` | Agent sessions inside this repository only |
+
+When installed via Homebrew, the skill file is placed at
+`$(brew --prefix)/share/jcli/SKILL.md`. Symlinking it into
+`~/.agents/skills/jira/` makes it globally available:
+
+```bash
+mkdir -p ~/.agents/skills/jira
+ln -sf "$(brew --prefix)/share/jcli/SKILL.md" ~/.agents/skills/jira/SKILL.md
+```
+
+When cloning the repository directly, the skill is already present at
+`.agents/skills/jira/SKILL.md` and will be discovered automatically by any
+compatible agent tool running inside the project directory.
 
 ---
 
