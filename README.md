@@ -84,17 +84,32 @@ overriding earlier ones**:
 
 | Priority | Source | Key names |
 |----------|--------|-----------|
-| 1 (lowest) | `.jcli.properties` file | `server`, `project`, `token`, `output` |
+| 1 (lowest) | Config file | `server`, `project`, `token`, `output` |
 | 2 | Environment variables | `JIRA_SERVER`, `JIRA_PROJECT`, `JIRA_API_TOKEN` |
 | 3 (highest) | CLI flags | `--server`, `--project`, `--token`, `--output` |
 
-### `.jcli.properties` file
+### Config file
 
-The file is searched starting from the **current working directory** and walking
-up through parent directories, then the user home directory.  The file uses
-Java-style `key=value` syntax; lines beginning with `#` or `!` are comments.
+The default config file location is **`~/.config/jcli/config.properties`**.
+On systems that set `$XDG_CONFIG_HOME`, the file is looked for at
+`$XDG_CONFIG_HOME/jcli/config.properties` instead.
+
+Use the `--config` flag to load a config file from any other path:
+
+```bash
+jcli --config /path/to/my-config.properties issue list
+```
+
+When `--config` is specified and the file does not exist, `jcli` exits with an
+error.  When the default path is used and the file is absent, `jcli` silently
+continues and relies on environment variables and CLI flags.
+
+The file uses Java-style `key=value` syntax; lines beginning with `#` or `!`
+are comments.
 
 ```properties
+# ~/.config/jcli/config.properties
+
 # Jira server URL (required)
 server=https://myorg.atlassian.net
 
@@ -106,6 +121,9 @@ token=my-personal-access-token
 
 # Default output format: table, json, or plain (optional, default: table)
 output=table
+
+# HTTP request timeout in seconds (optional, default: 30)
+# timeout=30
 ```
 
 ### Environment variables
@@ -124,12 +142,14 @@ These flags are available on every command:
 
 | Flag | Short | Description |
 |------|-------|-------------|
+| `--config` | | Path to config file (default: `~/.config/jcli/config.properties`) |
 | `--server` | | Jira server base URL |
 | `--token` | | Personal Access Token |
 | `--project` | | Default project key |
 | `--output` | `-o` | Output format: `table`, `json`, `plain` |
 | `--insecure` | | Skip TLS certificate verification |
 | `--verbose` | `-v` | Print HTTP request/response to stderr |
+| `--timeout` | | HTTP request timeout in seconds (default: 30) |
 | `--help` | `-h` | Show help for any command |
 
 ---
@@ -156,10 +176,12 @@ API: GET /rest/api/2/issue/{issueIdOrKey}
 | Flag | Description |
 |------|-------------|
 | `--fields` | Comma-separated field IDs to include (default: all) |
+| `--all-fields` | Include fields with empty or null values in JSON output (default omits them) |
 
 ```bash
 jcli issue get PROJ-42
 jcli issue get PROJ-42 --fields summary,status,assignee --output json
+jcli issue get PROJ-42 --all-fields --output json
 ```
 
 ---
@@ -243,23 +265,29 @@ jcli issue delete PROJ-42 --delete-subtasks
 Search for issues using **Jira Query Language (JQL)**.
 
 ```
-API: POST /rest/api/2/search
+API: GET /rest/api/2/search
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--jql` | JQL query string |
 | `--fields` | Comma-separated fields to return |
+| `--all-fields` | Include fields with empty or null values in JSON output (default omits them) |
 | `--start-at` | Pagination offset (default: 0) |
 | `--max-results` | Page size (default: 50) |
+| `--page` | Page number to fetch (1-based; computes `startAt` from `--max-results`) |
+| `--all` | Fetch all pages automatically (overrides `--page` and `--start-at`) |
 
-JQL documentation: https://support.atlassian.com/jira-service-management-cloud/docs/use-jql-to-filter-issues/
+JQL documentation: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-jql/
 
 ```bash
 jcli issue search --jql "project = PROJ AND status = 'In Progress'"
 jcli issue search --jql "assignee = currentUser() ORDER BY updated DESC"
 jcli issue search --jql "sprint in openSprints() AND priority = High"
 jcli issue search --jql "project = PROJ" --max-results 100 --output json
+jcli issue search --jql "project = PROJ" --all --output json
+jcli issue search --jql "project = PROJ" --page 2 --max-results 25
+jcli issue search --jql "project = PROJ" --all-fields --output json
 ```
 
 ---
@@ -719,7 +747,7 @@ jcli meta fields --output json
 ## Output Formats
 
 All commands support three output formats controlled by the `--output` / `-o` flag
-or the `output=` property in `.jcli.properties`:
+or the `output=` property in `~/.config/jcli/config.properties`:
 
 | Format | Description |
 |--------|-------------|
@@ -742,7 +770,7 @@ Generate a **Personal Access Token** (API token) from your Atlassian account:
 
 1. Visit https://id.atlassian.com/manage-profile/security/api-tokens
 2. Click **Create API token**
-3. Copy the token and set it in `.jcli.properties` or `JIRA_API_TOKEN`
+3. Copy the token and set it in `~/.config/jcli/config.properties` or `JIRA_API_TOKEN`
 
 The token is sent as a `Bearer` token in the `Authorization` HTTP header.
 
@@ -767,7 +795,7 @@ skip TLS verification:
 jcli --server https://jira.internal --insecure project list
 ```
 
-Or add `insecure=true` to `.jcli.properties`.
+Or add `insecure=true` to `~/.config/jcli/config.properties`.
 
 ---
 
@@ -825,7 +853,7 @@ jcli user myself --output json | jq -r '.accountId'
 | Jira Agile REST API | https://developer.atlassian.com/cloud/jira/software/rest/intro/ |
 | Jira Software (boards/sprints) | https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/ |
 | Issue fields reference | https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-fields/ |
-| JQL reference | https://support.atlassian.com/jira-service-management-cloud/docs/use-jql-to-filter-issues/ |
+| JQL reference | https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-jql/ |
 | API tokens (Cloud) | https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/ |
 | Personal Access Tokens (Server) | https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html |
 
@@ -850,6 +878,10 @@ go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out
 ### Building
 
 ```bash
+make build          # builds bin/jcli for the current platform
+make run            # builds and runs bin/jcli
+make release VERSION=v1.0.0   # cross-platform build + GitHub release
+# or directly with go:
 go build -o jcli .
 ```
 

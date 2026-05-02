@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/steveohara/jcli/internal/client"
@@ -68,8 +69,8 @@ func TestGetIssue_NotFound(t *testing.T) {
 
 func TestSearchIssues(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -164,6 +165,40 @@ func TestGetBoards(t *testing.T) {
 	}
 }
 
+func TestGetIssue_HTMLErrorResponse(t *testing.T) {
+	htmlBody := `<!DOCTYPE html>
+<html>
+<head><title>503 Service Unavailable</title></head>
+<body>
+  <h1>Service Unavailable</h1>
+  <p>The server is temporarily unable to service your request.</p>
+</body>
+</html>`
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(htmlBody))
+	}))
+	defer ts.Close()
+
+	c := newTestClient(ts.URL)
+	_, err := c.GetIssue(context.Background(), "PROJ-1", nil)
+	if err == nil {
+		t.Fatal("expected error for 503 HTML response")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "<html") || strings.Contains(msg, "<body") || strings.Contains(msg, "<p>") {
+		t.Errorf("error message contains raw HTML tags: %s", msg)
+	}
+	if !strings.Contains(msg, "503") {
+		t.Errorf("error message missing status code: %s", msg)
+	}
+	if !strings.Contains(msg, "Service Unavailable") {
+		t.Errorf("error message missing page content: %s", msg)
+	}
+}
+
 func TestCreateIssue(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -193,5 +228,52 @@ func TestCreateIssue(t *testing.T) {
 	}
 	if resp.Key != "PROJ-1" {
 		t.Errorf("key = %q, want %q", resp.Key, "PROJ-1")
+	}
+}
+
+// TestIssueFields_CustomFieldRoundTrip verifies that custom fields captured in
+// IssueFields.Extra during UnmarshalJSON are re-emitted by MarshalJSON so that
+// --output json includes them.
+func TestIssueFields_CustomFieldRoundTrip(t *testing.T) {
+	raw := `{
+		"summary": "Test",
+		"status": {"name": "Open"},
+		"customfield_10001": {"name": "Sprint 5"},
+		"customfield_10002": "some string value"
+	}`
+
+	var fields client.IssueFields
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		t.Fatalf("UnmarshalJSON: %v", err)
+	}
+
+	if fields.Summary != "Test" {
+		t.Errorf("Summary = %q, want %q", fields.Summary, "Test")
+	}
+	if len(fields.Extra) != 2 {
+		t.Errorf("Extra len = %d, want 2; Extra = %v", len(fields.Extra), fields.Extra)
+	}
+
+	// Re-marshal and verify custom fields are present in the output.
+	out, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("MarshalJSON: %v", err)
+	}
+	outStr := string(out)
+	if !strings.Contains(outStr, "customfield_10001") {
+		t.Errorf("marshaled JSON missing customfield_10001: %s", outStr)
+	}
+	if !strings.Contains(outStr, "Sprint 5") {
+		t.Errorf("marshaled JSON missing Sprint 5 value: %s", outStr)
+	}
+	if !strings.Contains(outStr, "customfield_10002") {
+		t.Errorf("marshaled JSON missing customfield_10002: %s", outStr)
+	}
+	if !strings.Contains(outStr, "some string value") {
+		t.Errorf("marshaled JSON missing string value: %s", outStr)
+	}
+	// Known fields must also be present.
+	if !strings.Contains(outStr, `"summary"`) {
+		t.Errorf("marshaled JSON missing summary field: %s", outStr)
 	}
 }

@@ -8,9 +8,10 @@ import (
 	"github.com/steveohara/jcli/internal/config"
 )
 
+// writeProps writes a config.properties file to dir and returns its path.
 func writeProps(t *testing.T, dir, content string) string {
 	t.Helper()
-	path := filepath.Join(dir, config.PropertiesFile)
+	path := filepath.Join(dir, config.DefaultConfigFile)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write props: %v", err)
 	}
@@ -19,16 +20,13 @@ func writeProps(t *testing.T, dir, content string) string {
 
 func TestLoad_FromPropertiesFile(t *testing.T) {
 	dir := t.TempDir()
-	writeProps(t, dir, "server=https://jira.example.com\ntoken=mytoken\nproject=PROJ\n")
+	path := writeProps(t, dir, "server=https://jira.example.com\ntoken=mytoken\nproject=PROJ\n")
 
-	// Change working directory so the file is found
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv(config.EnvServer, "")
+	t.Setenv(config.EnvToken, "")
+	t.Setenv(config.EnvProject, "")
 
-	cfg, err := config.Load(nil)
+	cfg, err := config.Load(&config.Config{ConfigFile: path})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,12 +43,12 @@ func TestLoad_FromPropertiesFile(t *testing.T) {
 
 func TestLoad_TrailingSlashStripped(t *testing.T) {
 	dir := t.TempDir()
-	writeProps(t, dir, "server=https://jira.example.com/\ntoken=t\n")
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	_ = os.Chdir(dir)
+	path := writeProps(t, dir, "server=https://jira.example.com/\ntoken=t\n")
 
-	cfg, err := config.Load(nil)
+	t.Setenv(config.EnvServer, "")
+	t.Setenv(config.EnvToken, "")
+
+	cfg, err := config.Load(&config.Config{ConfigFile: path})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,15 +59,12 @@ func TestLoad_TrailingSlashStripped(t *testing.T) {
 
 func TestLoad_EnvVarOverridesFile(t *testing.T) {
 	dir := t.TempDir()
-	writeProps(t, dir, "server=https://file.example.com\ntoken=filetoken\n")
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	_ = os.Chdir(dir)
+	path := writeProps(t, dir, "server=https://file.example.com\ntoken=filetoken\n")
 
 	t.Setenv(config.EnvServer, "https://env.example.com")
 	t.Setenv(config.EnvToken, "envtoken")
 
-	cfg, err := config.Load(nil)
+	cfg, err := config.Load(&config.Config{ConfigFile: path})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,16 +78,14 @@ func TestLoad_EnvVarOverridesFile(t *testing.T) {
 
 func TestLoad_CLIOverridesEnv(t *testing.T) {
 	dir := t.TempDir()
-	writeProps(t, dir, "server=https://file.example.com\ntoken=filetoken\n")
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	_ = os.Chdir(dir)
+	path := writeProps(t, dir, "server=https://file.example.com\ntoken=filetoken\n")
 
 	t.Setenv(config.EnvServer, "https://env.example.com")
 
 	overrides := &config.Config{
-		Server: "https://cli.example.com",
-		Token:  "clitoken",
+		ConfigFile: path,
+		Server:     "https://cli.example.com",
+		Token:      "clitoken",
 	}
 	cfg, err := config.Load(overrides)
 	if err != nil {
@@ -107,12 +100,7 @@ func TestLoad_CLIOverridesEnv(t *testing.T) {
 }
 
 func TestLoad_MissingServerReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	_ = os.Chdir(dir)
-
-	// Clear env vars that might be set in the outer environment
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // prevent reading real ~/.config/jcli/config.properties
 	t.Setenv(config.EnvServer, "")
 	t.Setenv(config.EnvToken, "")
 
@@ -123,11 +111,7 @@ func TestLoad_MissingServerReturnsError(t *testing.T) {
 }
 
 func TestLoad_MissingTokenReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	_ = os.Chdir(dir)
-
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // prevent reading real ~/.config/jcli/config.properties
 	t.Setenv(config.EnvServer, "https://jira.example.com")
 	t.Setenv(config.EnvToken, "")
 
@@ -145,16 +129,23 @@ server=https://jira.example.com
 # token=ignored
 token=realtoken
 `
-	writeProps(t, dir, content)
-	orig, _ := os.Getwd()
-	t.Cleanup(func() { _ = os.Chdir(orig) })
-	_ = os.Chdir(dir)
+	path := writeProps(t, dir, content)
 
-	cfg, err := config.Load(nil)
+	t.Setenv(config.EnvServer, "")
+	t.Setenv(config.EnvToken, "")
+
+	cfg, err := config.Load(&config.Config{ConfigFile: path})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.Token != "realtoken" {
 		t.Errorf("token = %q, want %q", cfg.Token, "realtoken")
+	}
+}
+
+func TestLoad_ExplicitMissingFileReturnsError(t *testing.T) {
+	_, err := config.Load(&config.Config{ConfigFile: "/nonexistent/path/config.properties"})
+	if err == nil {
+		t.Error("expected error when explicit config file does not exist")
 	}
 }

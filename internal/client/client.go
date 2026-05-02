@@ -7,7 +7,7 @@
 // The client automatically prefixes all requests with the configured server
 // URL and the appropriate API base path:
 //
-//   - /rest/api/2  – core Jira API
+//   - /rest/api/2  – core Jira API (v2)
 //   - /rest/agile/1.0 – Jira Agile (boards, sprints)
 package client
 
@@ -44,6 +44,10 @@ type Client struct {
 
 // New creates a new Client from the supplied configuration.
 func New(cfg *config.Config) *Client {
+	timeout := defaultTimeout
+	if cfg.Timeout > 0 {
+		timeout = time.Duration(cfg.Timeout) * time.Second
+	}
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: cfg.Insecure, // #nosec G402 – user-controlled flag
@@ -52,7 +56,7 @@ func New(cfg *config.Config) *Client {
 	return &Client{
 		cfg: cfg,
 		httpClient: &http.Client{
-			Timeout:   defaultTimeout,
+			Timeout:   timeout,
 			Transport: transport,
 		},
 	}
@@ -93,6 +97,24 @@ func (c *Client) do(ctx context.Context, method, apiPath string, body, out inter
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+		// Jira Server enforces XSRF protection on non-GET requests.
+		req.Header.Set("X-Atlassian-Token", "no-check")
+	}
+
+	// --debug: print the equivalent curl command and exit without sending.
+	if c.cfg.Debug {
+		headers := []header{
+			{"Authorization", "Bearer " + c.cfg.Token},
+			{"Accept", "application/json"},
+		}
+		var bodyBytes []byte
+		if body != nil {
+			headers = append(headers, header{"Content-Type", "application/json"})
+			headers = append(headers, header{"X-Atlassian-Token", "no-check"})
+			bodyBytes, _ = json.Marshal(body)
+		}
+		fmt.Println(formatCurl(method, rawURL, headers, bodyBytes, c.cfg.Insecure))
+		os.Exit(0)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -111,7 +133,7 @@ func (c *Client) do(ctx context.Context, method, apiPath string, body, out inter
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return parseAPIError(resp.StatusCode, respBody)
+		return parseAPIError(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 	}
 
 	if out != nil && len(respBody) > 0 {
@@ -152,8 +174,8 @@ func buildQuery(path string, params url.Values) string {
 
 // apiError represents a structured error from the Jira API.
 type apiError struct {
-	StatusCode   int
-	ErrorMessages []string `json:"errorMessages"`
+	StatusCode    int
+	ErrorMessages []string          `json:"errorMessages"`
 	Errors        map[string]string `json:"errors"`
 }
 
@@ -164,12 +186,43 @@ func (e *apiError) Error() string {
 	for k, v := range e.Errors {
 		parts = append(parts, fmt.Sprintf("%s: %s", k, v))
 	}
+	if hint := statusHint(e.StatusCode); hint != "" {
+		parts = append(parts, hint)
+	}
 	return strings.Join(parts, "; ")
 }
 
-func parseAPIError(statusCode int, body []byte) error {
+// statusHint returns a short actionable hint for well-known HTTP error codes.
+func statusHint(code int) string {
+	switch code {
+	case http.StatusUnauthorized:
+		return "hint: check your API token (--token / JIRA_API_TOKEN)"
+	case http.StatusForbidden:
+		return "hint: you do not have permission for this action"
+	case http.StatusNotFound:
+		return "hint: the resource was not found – check the issue key or project"
+	case http.StatusBadRequest:
+		return "hint: the request was rejected – verify all required fields and values"
+	default:
+		return ""
+	}
+}
+
+func parseAPIError(statusCode int, contentType string, body []byte) error {
 	e := &apiError{StatusCode: statusCode}
-	_ = json.Unmarshal(body, e) // best-effort
+
+	// If the server returned HTML (e.g. a proxy/gateway error page), extract
+	// the readable text rather than dumping raw markup.
+	if isHTML(contentType, body) {
+		text := htmlToText(body, 8)
+		if text == "" {
+			text = http.StatusText(statusCode)
+		}
+		e.ErrorMessages = []string{text}
+		return e
+	}
+
+	_ = json.Unmarshal(body, e) // best-effort JSON decode
 	if len(e.ErrorMessages) == 0 && len(e.Errors) == 0 {
 		e.ErrorMessages = []string{string(body)}
 	}
@@ -184,37 +237,198 @@ func parseAPIError(statusCode int, body []byte) error {
 type Issue struct {
 	ID     string      `json:"id"`
 	Key    string      `json:"key"`
-	Self   string      `json:"self"`
+	Self   string      `json:"self,omitempty"`
 	Fields IssueFields `json:"fields"`
+
+	// Raw stores the original JSON bytes received from the API.
+	// It is used by --all-fields to output the response without the
+	// omitempty suppression applied during normal typed marshaling.
+	Raw json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes a Jira issue, capturing the raw bytes alongside the
+// typed fields so that callers can round-trip the original payload when needed.
+func (i *Issue) UnmarshalJSON(data []byte) error {
+	// Alias breaks the recursion; Fields is still typed as IssueFields so its
+	// own UnmarshalJSON (which populates Extra) is called normally.
+	type rawIssue Issue
+	var raw rawIssue
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*i = Issue(raw)
+	i.Raw = append(json.RawMessage(nil), data...) // defensive copy
+	return nil
 }
 
 // IssueFields contains the field values of a Jira issue.
 type IssueFields struct {
-	Summary     string       `json:"summary"`
-	Description string       `json:"description"`
-	Status      NamedObj     `json:"status"`
-	Priority    NamedObj     `json:"priority"`
-	Assignee    *User        `json:"assignee"`
-	Reporter    *User        `json:"reporter"`
-	IssueType   NamedObj     `json:"issuetype"`
-	Project     ProjectShort `json:"project"`
-	Labels      []string     `json:"labels"`
-	Components  []NamedObj   `json:"components"`
-	FixVersions []NamedObj   `json:"fixVersions"`
-	Created     string       `json:"created"`
-	Updated     string       `json:"updated"`
-	DueDate     string       `json:"duedate"`
-	Votes       *Votes       `json:"votes"`
-	Watches     *Watches     `json:"watches"`
-	Comment     *CommentList `json:"comment"`
-	TimeTracking *TimeTracking `json:"timetracking"`
-	Parent      *IssueRef    `json:"parent"`
+	Summary      string        `json:"summary,omitempty"`
+	Description  ADFString     `json:"description,omitempty"`
+	Status       NamedObj      `json:"status,omitempty"`
+	Priority     NamedObj      `json:"priority,omitempty"`
+	Assignee     *User         `json:"assignee,omitempty"`
+	Reporter     *User         `json:"reporter,omitempty"`
+	IssueType    NamedObj      `json:"issuetype,omitempty"`
+	Project      ProjectShort  `json:"project,omitempty"`
+	Labels       []string      `json:"labels,omitempty"`
+	Components   []NamedObj    `json:"components,omitempty"`
+	FixVersions  []NamedObj    `json:"fixVersions,omitempty"`
+	Created      string        `json:"created,omitempty"`
+	Updated      string        `json:"updated,omitempty"`
+	DueDate      string        `json:"duedate,omitempty"`
+	Votes        *Votes        `json:"votes,omitempty"`
+	Watches      *Watches      `json:"watches,omitempty"`
+	Comment      *CommentList  `json:"comment,omitempty"`
+	TimeTracking *TimeTracking `json:"timetracking,omitempty"`
+	Parent       *IssueRef     `json:"parent,omitempty"`
+
+	// Extra holds any fields not explicitly modelled above (e.g. customfield_10001).
+	// Values are stored as raw JSON for lazy decoding; use FormatCustomField to render them.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// knownIssueFields is the set of JSON field names that are explicitly decoded
+// into IssueFields.  Everything else ends up in Extra.
+var knownIssueFields = map[string]bool{
+	"summary": true, "description": true, "status": true, "priority": true,
+	"assignee": true, "reporter": true, "issuetype": true, "project": true,
+	"labels": true, "components": true, "fixVersions": true, "created": true,
+	"updated": true, "duedate": true, "votes": true, "watches": true,
+	"comment": true, "timetracking": true, "parent": true,
+}
+
+// UnmarshalJSON decodes the Jira fields object.  Known fields are decoded into
+// their typed struct fields; unrecognised fields (e.g. custom fields) are
+// stored verbatim in Extra.
+func (f *IssueFields) UnmarshalJSON(data []byte) error {
+	// Use a type alias to call the default decoder without recursion.
+	type rawFields IssueFields
+	var raw rawFields
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*f = IssueFields(raw)
+
+	// Capture all top-level keys so that custom fields can be retrieved later.
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err != nil {
+		return err
+	}
+	f.Extra = make(map[string]json.RawMessage, len(all))
+	for k, v := range all {
+		if !knownIssueFields[k] {
+			f.Extra[k] = v
+		}
+	}
+	return nil
+}
+
+// MarshalJSON serialises IssueFields including any custom fields stored in
+// Extra, so that --output json round-trips all field data back to the caller.
+// It also manually omits zero-value struct fields (NamedObj, ProjectShort)
+// that encoding/json's omitempty cannot handle — omitempty only suppresses
+// pointers, strings, slices, maps, and numeric types, not struct values.
+func (f IssueFields) MarshalJSON() ([]byte, error) {
+	// Serialise known struct fields via alias (Extra skipped by json:"-").
+	type rawFields IssueFields
+	known, err := json.Marshal(rawFields(f))
+	if err != nil {
+		return nil, err
+	}
+
+	// Decode into a map so we can post-process individual entries.
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(known, &m); err != nil {
+		return nil, err
+	}
+
+	// Remove struct-typed fields that hold only zero / empty values.
+	// This covers the case where the API did not return the field (e.g.
+	// "priority": null) so the Go struct was left at its zero value.
+	for _, key := range []string{"status", "priority", "issuetype", "project"} {
+		if v, ok := m[key]; ok && isJSONObjectEmpty(v) {
+			delete(m, key)
+		}
+	}
+
+	// Merge in custom / extra fields.
+	for k, v := range f.Extra {
+		m[k] = v
+	}
+
+	return json.Marshal(m)
+}
+
+// isJSONObjectEmpty reports whether raw is a JSON object in which every value
+// is either an empty string or null.  It is used to detect zero-value structs
+// that were not present in the API response (e.g. NamedObj{}, ProjectShort{}).
+func isJSONObjectEmpty(raw json.RawMessage) bool {
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return false // not an object – leave as-is
+	}
+	for _, v := range m {
+		switch val := v.(type) {
+		case string:
+			if val != "" {
+				return false
+			}
+		case nil:
+			// null counts as empty
+		default:
+			return false // number, bool, object, array – definitely not empty
+		}
+	}
+	return true
+}
+
+// FormatCustomField converts a raw JSON value from IssueFields.Extra into a
+// human-readable string.  It handles common Jira value shapes (plain strings,
+// named objects, arrays) without requiring callers to know the field schema.
+func FormatCustomField(raw json.RawMessage) string {
+	var v interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	return formatFieldValue(v)
+}
+
+func formatFieldValue(v interface{}) string {
+	switch val := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return val
+	case float64:
+		return fmt.Sprintf("%g", val)
+	case bool:
+		return fmt.Sprintf("%v", val)
+	case map[string]interface{}:
+		// Prefer the most human-friendly key available.
+		for _, key := range []string{"displayName", "name", "value", "key", "id"} {
+			if s, ok := val[key].(string); ok {
+				return s
+			}
+		}
+		b, _ := json.Marshal(val)
+		return string(b)
+	case []interface{}:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			parts = append(parts, formatFieldValue(item))
+		}
+		return strings.Join(parts, ", ")
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
 }
 
 // IssueRef is a lightweight reference to another issue (e.g. parent).
 type IssueRef struct {
-	ID  string `json:"id"`
-	Key string `json:"key"`
+	ID  string `json:"id,omitempty"`
+	Key string `json:"key,omitempty"`
 }
 
 // NamedObj is a simple name-only sub-object used throughout the Jira API.
@@ -226,9 +440,9 @@ type NamedObj struct {
 
 // ProjectShort is a minimal project representation.
 type ProjectShort struct {
-	ID   string `json:"id"`
-	Key  string `json:"key"`
-	Name string `json:"name"`
+	ID   string `json:"id,omitempty"`
+	Key  string `json:"key,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // Votes holds vote count information.
@@ -273,10 +487,10 @@ type CreateIssueRequest struct {
 
 // CreateIssueFields contains the field values for issue creation.
 type CreateIssueFields struct {
-	Project     IDObj    `json:"project"`
-	Summary     string   `json:"summary"`
-	Description string   `json:"description,omitempty"`
-	IssueType   NamedObj `json:"issuetype"`
+	Project     IDObj     `json:"project"`
+	Summary     string    `json:"summary"`
+	Description string    `json:"description,omitempty"`
+	IssueType   NamedObj  `json:"issuetype"`
 	Priority    *NamedObj `json:"priority,omitempty"`
 	Assignee    *IDObj    `json:"assignee,omitempty"`
 	Labels      []string  `json:"labels,omitempty"`
@@ -352,22 +566,21 @@ type SearchOptions struct {
 
 // SearchIssues executes a JQL search and returns matching issues.
 //
-// API: POST /rest/api/2/search
+// API: GET /rest/api/2/search
 func (c *Client) SearchIssues(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
 	maxResults := opts.MaxResults
 	if maxResults == 0 {
 		maxResults = 50
 	}
-	payload := map[string]interface{}{
-		"jql":        opts.JQL,
-		"startAt":    opts.StartAt,
-		"maxResults": maxResults,
-	}
+	params := url.Values{}
+	params.Set("jql", opts.JQL)
+	params.Set("startAt", fmt.Sprintf("%d", opts.StartAt))
+	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
 	if len(opts.Fields) > 0 {
-		payload["fields"] = opts.Fields
+		params.Set("fields", strings.Join(opts.Fields, ","))
 	}
 	var result SearchResult
-	return &result, c.post(ctx, apiBase+"/search", payload, &result)
+	return &result, c.get(ctx, buildQuery(apiBase+"/search", params), &result)
 }
 
 // -----------------------------------------------------------------------
@@ -376,20 +589,20 @@ func (c *Client) SearchIssues(ctx context.Context, opts SearchOptions) (*SearchR
 
 // Comment represents a Jira issue comment.
 type Comment struct {
-	ID      string `json:"id"`
-	Self    string `json:"self"`
-	Author  *User  `json:"author"`
-	Body    string `json:"body"`
-	Created string `json:"created"`
-	Updated string `json:"updated"`
+	ID      string    `json:"id"`
+	Self    string    `json:"self"`
+	Author  *User     `json:"author"`
+	Body    ADFString `json:"body"`
+	Created string    `json:"created"`
+	Updated string    `json:"updated"`
 }
 
 // CommentList is the paginated list of comments returned by the API.
 type CommentList struct {
-	Total    int       `json:"total"`
-	StartAt  int       `json:"startAt"`
-	MaxResults int     `json:"maxResults"`
-	Comments []Comment `json:"comments"`
+	Total      int       `json:"total"`
+	StartAt    int       `json:"startAt"`
+	MaxResults int       `json:"maxResults"`
+	Comments   []Comment `json:"comments"`
 }
 
 // GetComments retrieves all comments for an issue.
@@ -404,7 +617,7 @@ func (c *Client) GetComments(ctx context.Context, issueKey string) (*CommentList
 //
 // API: POST /rest/api/2/issue/{issueIdOrKey}/comment
 func (c *Client) AddComment(ctx context.Context, issueKey, body string) (*Comment, error) {
-	payload := map[string]string{"body": body}
+	payload := map[string]interface{}{"body": body}
 	var comment Comment
 	return &comment, c.post(ctx, fmt.Sprintf("%s/issue/%s/comment", apiBase, issueKey), payload, &comment)
 }
@@ -413,7 +626,7 @@ func (c *Client) AddComment(ctx context.Context, issueKey, body string) (*Commen
 //
 // API: PUT /rest/api/2/issue/{issueIdOrKey}/comment/{id}
 func (c *Client) UpdateComment(ctx context.Context, issueKey, commentID, body string) (*Comment, error) {
-	payload := map[string]string{"body": body}
+	payload := map[string]interface{}{"body": body}
 	var comment Comment
 	return &comment, c.put(ctx, fmt.Sprintf("%s/issue/%s/comment/%s", apiBase, issueKey, commentID), payload, &comment)
 }
@@ -486,21 +699,21 @@ func (c *Client) AssignIssue(ctx context.Context, issueKey, accountID string) er
 
 // Worklog represents a Jira worklog entry.
 type Worklog struct {
-	ID               string `json:"id"`
-	Self             string `json:"self"`
-	Author           *User  `json:"author"`
-	Comment          string `json:"comment"`
-	Started          string `json:"started"`
-	TimeSpent        string `json:"timeSpent"`
-	TimeSpentSeconds int    `json:"timeSpentSeconds"`
+	ID               string    `json:"id"`
+	Self             string    `json:"self"`
+	Author           *User     `json:"author"`
+	Comment          ADFString `json:"comment"`
+	Started          string    `json:"started"`
+	TimeSpent        string    `json:"timeSpent"`
+	TimeSpentSeconds int       `json:"timeSpentSeconds"`
 }
 
 // WorklogList is a paginated list of worklogs.
 type WorklogList struct {
-	Total     int       `json:"total"`
-	StartAt   int       `json:"startAt"`
-	MaxResults int      `json:"maxResults"`
-	Worklogs  []Worklog `json:"worklogs"`
+	Total      int       `json:"total"`
+	StartAt    int       `json:"startAt"`
+	MaxResults int       `json:"maxResults"`
+	Worklogs   []Worklog `json:"worklogs"`
 }
 
 // GetWorklogs retrieves worklogs for an issue.
@@ -515,7 +728,7 @@ func (c *Client) GetWorklogs(ctx context.Context, issueKey string) (*WorklogList
 //
 // API: POST /rest/api/2/issue/{issueIdOrKey}/worklog
 func (c *Client) AddWorklog(ctx context.Context, issueKey, timeSpent, started, comment string) (*Worklog, error) {
-	payload := map[string]string{
+	payload := map[string]interface{}{
 		"timeSpent": timeSpent,
 		"started":   started,
 		"comment":   comment,
@@ -630,6 +843,18 @@ func (c *Client) AddAttachment(ctx context.Context, issueKey, filePath string) (
 	w.Close()
 
 	rawURL := c.cfg.Server + fmt.Sprintf("%s/issue/%s/attachments", apiBase, issueKey)
+
+	// --debug: print the equivalent curl command and exit without sending.
+	if c.cfg.Debug {
+		headers := []header{
+			{"Authorization", "Bearer " + c.cfg.Token},
+			{"X-Atlassian-Token", "no-check"},
+		}
+		fmt.Println(formatCurl(http.MethodPost, rawURL, headers, nil, c.cfg.Insecure) +
+			fmt.Sprintf(" \\\n  -F 'file=@%s'", filePath))
+		os.Exit(0)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, &buf)
 	if err != nil {
 		return nil, err
@@ -645,7 +870,7 @@ func (c *Client) AddAttachment(ctx context.Context, issueKey, filePath string) (
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, parseAPIError(resp.StatusCode, respBody)
+		return nil, parseAPIError(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 	}
 	var attachments []Attachment
 	if err := json.Unmarshal(respBody, &attachments); err != nil {
@@ -696,7 +921,7 @@ func (c *Client) LinkIssues(ctx context.Context, linkTypeName, inwardKey, outwar
 		"outwardIssue": map[string]string{"key": outwardKey},
 	}
 	if comment != "" {
-		payload["comment"] = map[string]string{"body": comment}
+		payload["comment"] = map[string]interface{}{"body": comment}
 	}
 	return c.post(ctx, apiBase+"/issueLink", payload, nil)
 }
@@ -881,12 +1106,12 @@ func (c *Client) DeleteComponent(ctx context.Context, componentID string) error 
 
 // User represents a Jira user.
 type User struct {
-	AccountID    string `json:"accountId"`
-	Name         string `json:"name"`
-	DisplayName  string `json:"displayName"`
-	EmailAddress string `json:"emailAddress"`
+	AccountID    string `json:"accountId,omitempty"`
+	Name         string `json:"name,omitempty"`
+	DisplayName  string `json:"displayName,omitempty"`
+	EmailAddress string `json:"emailAddress,omitempty"`
 	Active       bool   `json:"active"`
-	Self         string `json:"self"`
+	Self         string `json:"self,omitempty"`
 }
 
 // GetUser retrieves a user by account ID.
@@ -982,13 +1207,13 @@ func (c *Client) GetStatuses(ctx context.Context) ([]Status, error) {
 
 // Field represents a Jira issue field definition.
 type Field struct {
-	ID          string `json:"id"`
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Custom      bool   `json:"custom"`
-	Orderable   bool   `json:"orderable"`
-	Navigable   bool   `json:"navigable"`
-	Searchable  bool   `json:"searchable"`
+	ID         string `json:"id"`
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	Custom     bool   `json:"custom"`
+	Orderable  bool   `json:"orderable"`
+	Navigable  bool   `json:"navigable"`
+	Searchable bool   `json:"searchable"`
 }
 
 // GetFields returns all field definitions.
@@ -1005,10 +1230,10 @@ func (c *Client) GetFields(ctx context.Context) ([]Field, error) {
 
 // Board represents a Jira Agile board.
 type Board struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Self     string `json:"self"`
+	ID       int            `json:"id"`
+	Name     string         `json:"name"`
+	Type     string         `json:"type"`
+	Self     string         `json:"self"`
 	Location *BoardLocation `json:"location"`
 }
 

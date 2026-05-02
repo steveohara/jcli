@@ -3,6 +3,7 @@ package issue
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -43,9 +44,70 @@ func init() {
 
 // -----------------------------------------------------------------------
 // issue get
+
+// issueKVRow maps a Jira field ID to a KV table label and value extractor.
+type issueKVRow struct {
+	field   string
+	label   string
+	extract func(*client.Issue) string
+}
+
+// allIssueKVRows defines the full ordered set of rows for `issue get` table output.
+// Key and ID are always shown; the remaining rows are filtered by --fields when set.
+var allIssueKVRows = []issueKVRow{
+	{"summary", "Summary", func(i *client.Issue) string { return i.Fields.Summary }},
+	{"issuetype", "Type", func(i *client.Issue) string { return i.Fields.IssueType.Name }},
+	{"status", "Status", func(i *client.Issue) string { return i.Fields.Status.Name }},
+	{"priority", "Priority", func(i *client.Issue) string { return i.Fields.Priority.Name }},
+	{"assignee", "Assignee", func(i *client.Issue) string {
+		if i.Fields.Assignee != nil {
+			return i.Fields.Assignee.DisplayName
+		}
+		return ""
+	}},
+	{"reporter", "Reporter", func(i *client.Issue) string {
+		if i.Fields.Reporter != nil {
+			return i.Fields.Reporter.DisplayName
+		}
+		return ""
+	}},
+	{"project", "Project", func(i *client.Issue) string { return i.Fields.Project.Key }},
+	{"created", "Created", func(i *client.Issue) string { return i.Fields.Created }},
+	{"updated", "Updated", func(i *client.Issue) string { return i.Fields.Updated }},
+	{"duedate", "Due Date", func(i *client.Issue) string { return i.Fields.DueDate }},
+	{"labels", "Labels", func(i *client.Issue) string { return strings.Join(i.Fields.Labels, ", ") }},
+	{"description", "Description", func(i *client.Issue) string {
+		return output.Truncate(string(i.Fields.Description), 200)
+	}},
+}
+
+// issueColumn maps a Jira field ID to a search results table column header and extractor.
+type issueColumn struct {
+	field   string
+	header  string
+	extract func(client.Issue) string
+}
+
+// defaultSearchColumns defines the full ordered set of columns for `issue search` table output.
+var defaultSearchColumns = []issueColumn{
+	{"issuetype", "TYPE", func(i client.Issue) string { return i.Fields.IssueType.Name }},
+	{"priority", "PRIORITY", func(i client.Issue) string { return i.Fields.Priority.Name }},
+	{"status", "STATUS", func(i client.Issue) string { return i.Fields.Status.Name }},
+	{"assignee", "ASSIGNEE", func(i client.Issue) string {
+		if i.Fields.Assignee != nil {
+			return i.Fields.Assignee.DisplayName
+		}
+		return ""
+	}},
+	{"summary", "SUMMARY", func(i client.Issue) string { return output.Truncate(i.Fields.Summary, 60) }},
+}
+
 // -----------------------------------------------------------------------
 
-var getFields []string
+var (
+	getFields    []string
+	getAllFields bool
+)
 
 var getCmd = &cobra.Command{
 	Use:   "get <issue-key>",
@@ -67,32 +129,61 @@ Examples:
 		}
 		p := output.Default(cfg.OutputFormat)
 		if cfg.OutputFormat == output.FormatJSON {
+			if getAllFields {
+				// Output the raw API response so no fields are suppressed by omitempty.
+				return p.JSON(issue.Raw)
+			}
 			return p.JSON(issue)
 		}
-		assignee := ""
-		if issue.Fields.Assignee != nil {
-			assignee = issue.Fields.Assignee.DisplayName
+
+		// Determine which KV rows to show. Key and ID are always included.
+		// When --fields is set only show rows whose field ID was requested.
+		rows := allIssueKVRows
+		if len(getFields) > 0 {
+			fieldSet := make(map[string]bool, len(getFields))
+			for _, f := range getFields {
+				fieldSet[strings.ToLower(f)] = true
+			}
+
+			// Filter to known rows that were requested.
+			rows = nil
+			for _, row := range allIssueKVRows {
+				if fieldSet[row.field] {
+					rows = append(rows, row)
+				}
+			}
+
+			// Append rows for any custom (unrecognised) field IDs.
+			foundFields := make(map[string]bool, len(rows))
+			for _, row := range rows {
+				foundFields[row.field] = true
+			}
+			for _, f := range getFields {
+				fLower := strings.ToLower(f)
+				if !foundFields[fLower] {
+					fieldID := fLower // new var per iteration for closure
+					rows = append(rows, issueKVRow{
+						field: fieldID,
+						label: fieldID,
+						extract: func(i *client.Issue) string {
+							if raw, ok := i.Fields.Extra[fieldID]; ok {
+								return client.FormatCustomField(raw)
+							}
+							return ""
+						},
+					})
+				}
+			}
 		}
-		reporter := ""
-		if issue.Fields.Reporter != nil {
-			reporter = issue.Fields.Reporter.DisplayName
-		}
-		p.KV([][]string{
+
+		kvPairs := [][]string{
 			{"Key", issue.Key},
 			{"ID", issue.ID},
-			{"Summary", issue.Fields.Summary},
-			{"Type", issue.Fields.IssueType.Name},
-			{"Status", issue.Fields.Status.Name},
-			{"Priority", issue.Fields.Priority.Name},
-			{"Assignee", assignee},
-			{"Reporter", reporter},
-			{"Project", issue.Fields.Project.Key},
-			{"Created", issue.Fields.Created},
-			{"Updated", issue.Fields.Updated},
-			{"Due Date", issue.Fields.DueDate},
-			{"Labels", strings.Join(issue.Fields.Labels, ", ")},
-			{"Description", output.Truncate(issue.Fields.Description, 200)},
-		})
+		}
+		for _, row := range rows {
+			kvPairs = append(kvPairs, []string{row.label, row.extract(issue)})
+		}
+		p.KV(kvPairs)
 		return nil
 	},
 }
@@ -101,6 +192,8 @@ func init() {
 	getCmd.Flags().StringSliceVar(&getFields, "fields", nil,
 		"Comma-separated list of field IDs to include in the response.\n"+
 			"By default all fields are returned. Example: --fields summary,status,assignee")
+	getCmd.Flags().BoolVar(&getAllFields, "all-fields", false,
+		"Include fields with empty or null values in JSON output (default omits them)")
 }
 
 // -----------------------------------------------------------------------
@@ -304,6 +397,9 @@ var (
 	searchFields     []string
 	searchStartAt    int
 	searchMaxResults int
+	searchPage       int
+	searchAll        bool
+	searchAllFields  bool
 )
 
 var searchCmd = &cobra.Command{
@@ -313,8 +409,8 @@ var searchCmd = &cobra.Command{
 
 Results are paginated; use --start-at and --max-results to control the page.
 
-API: POST /rest/api/2/search
-Ref: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-search/#api-rest-api-2-search-post
+API: GET /rest/api/2/search
+Ref: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-search/#api-rest-api-2-search-get
 
 JQL documentation: https://support.atlassian.com/jira-service-management-cloud/docs/use-jql-to-filter-issues/
 
@@ -327,37 +423,126 @@ Examples:
 		if searchJQL == "" && cfg.DefaultProject != "" {
 			searchJQL = fmt.Sprintf("project = %s", cfg.DefaultProject)
 		}
+
+		maxResults := searchMaxResults
+		if maxResults == 0 {
+			maxResults = 50
+		}
+
+		// --page overrides --start-at (1-based page number).
+		startAt := searchStartAt
+		if searchPage > 0 {
+			startAt = (searchPage - 1) * maxResults
+		}
+
 		opts := client.SearchOptions{
 			JQL:        searchJQL,
 			Fields:     searchFields,
-			StartAt:    searchStartAt,
-			MaxResults: searchMaxResults,
+			StartAt:    startAt,
+			MaxResults: maxResults,
 		}
-		result, err := cl.SearchIssues(context.Background(), opts)
-		if err != nil {
-			return err
+
+		var result *client.SearchResult
+		if searchAll {
+			// Auto-paginate: collect every issue across all pages.
+			result = &client.SearchResult{}
+			for {
+				page, err := cl.SearchIssues(context.Background(), opts)
+				if err != nil {
+					return err
+				}
+				result.Issues = append(result.Issues, page.Issues...)
+				result.Total = page.Total
+				result.MaxResults = page.MaxResults
+				if len(page.Issues) == 0 || len(result.Issues) >= page.Total {
+					break
+				}
+				opts.StartAt += len(page.Issues)
+			}
+		} else {
+			var err error
+			result, err = cl.SearchIssues(context.Background(), opts)
+			if err != nil {
+				return err
+			}
 		}
+
 		p := output.Default(cfg.OutputFormat)
 		if cfg.OutputFormat == output.FormatJSON {
+			if searchAllFields {
+				// Rebuild the result using the raw per-issue bytes so that
+				// omitempty suppression is bypassed for every issue object.
+				rawIssues := make([]json.RawMessage, len(result.Issues))
+				for i, iss := range result.Issues {
+					rawIssues[i] = iss.Raw
+				}
+				return p.JSON(map[string]interface{}{
+					"total":      result.Total,
+					"startAt":    result.StartAt,
+					"maxResults": result.MaxResults,
+					"issues":     rawIssues,
+				})
+			}
 			return p.JSON(result)
 		}
+
+		// Determine which columns to show. KEY is always first.
+		// When --fields is set only show columns whose field ID was requested,
+		// plus a pass-through column for any unrecognised (custom) field IDs.
+		cols := defaultSearchColumns
+		if len(searchFields) > 0 {
+			fieldSet := make(map[string]bool, len(searchFields))
+			for _, f := range searchFields {
+				fieldSet[strings.ToLower(f)] = true
+			}
+
+			// Filter to known columns that were requested.
+			cols = nil
+			for _, col := range defaultSearchColumns {
+				if fieldSet[col.field] {
+					cols = append(cols, col)
+				}
+			}
+
+			// Append columns for any custom (unrecognised) field IDs.
+			foundFields := make(map[string]bool, len(cols))
+			for _, col := range cols {
+				foundFields[col.field] = true
+			}
+			for _, f := range searchFields {
+				fLower := strings.ToLower(f)
+				if !foundFields[fLower] {
+					fieldID := fLower // new var per iteration for closure
+					cols = append(cols, issueColumn{
+						field:  fieldID,
+						header: strings.ToUpper(fieldID),
+						extract: func(i client.Issue) string {
+							if raw, ok := i.Fields.Extra[fieldID]; ok {
+								return client.FormatCustomField(raw)
+							}
+							return ""
+						},
+					})
+				}
+			}
+		}
+
+		headers := make([]string, 0, len(cols)+1)
+		headers = append(headers, "KEY")
+		for _, col := range cols {
+			headers = append(headers, col.header)
+		}
+
 		fmt.Fprintf(output.Stdout(), "Found %d issues (showing %d)\n", result.Total, len(result.Issues))
 		var rows [][]string
 		for _, issue := range result.Issues {
-			assignee := ""
-			if issue.Fields.Assignee != nil {
-				assignee = issue.Fields.Assignee.DisplayName
+			row := []string{issue.Key}
+			for _, col := range cols {
+				row = append(row, col.extract(issue))
 			}
-			rows = append(rows, []string{
-				issue.Key,
-				issue.Fields.IssueType.Name,
-				issue.Fields.Priority.Name,
-				issue.Fields.Status.Name,
-				assignee,
-				output.Truncate(issue.Fields.Summary, 60),
-			})
+			rows = append(rows, row)
 		}
-		p.Table([]string{"KEY", "TYPE", "PRIORITY", "STATUS", "ASSIGNEE", "SUMMARY"}, rows)
+		p.Table(headers, rows)
 		return nil
 	},
 }
@@ -371,6 +556,12 @@ func init() {
 		"Index of the first result to return (0-based, for pagination)")
 	searchCmd.Flags().IntVar(&searchMaxResults, "max-results", 50,
 		"Maximum number of results to return per page")
+	searchCmd.Flags().IntVar(&searchPage, "page", 0,
+		"Page number to fetch (1-based); overrides --start-at")
+	searchCmd.Flags().BoolVar(&searchAll, "all", false,
+		"Fetch all pages automatically (overrides --page and --start-at)")
+	searchCmd.Flags().BoolVar(&searchAllFields, "all-fields", false,
+		"Include fields with empty or null values in JSON output (default omits them)")
 }
 
 // -----------------------------------------------------------------------
@@ -417,7 +608,7 @@ Example:
 			if comment.Author != nil {
 				author = comment.Author.DisplayName
 			}
-			rows = append(rows, []string{comment.ID, author, comment.Created, output.Truncate(comment.Body, 80)})
+			rows = append(rows, []string{comment.ID, author, comment.Created, output.Truncate(string(comment.Body), 80)})
 		}
 		p.Table([]string{"ID", "AUTHOR", "CREATED", "BODY"}, rows)
 		return nil
@@ -669,7 +860,7 @@ Example:
 			if wl.Author != nil {
 				author = wl.Author.DisplayName
 			}
-			rows = append(rows, []string{wl.ID, author, wl.Started, wl.TimeSpent, output.Truncate(wl.Comment, 60)})
+			rows = append(rows, []string{wl.ID, author, wl.Started, wl.TimeSpent, output.Truncate(string(wl.Comment), 60)})
 		}
 		p.Table([]string{"ID", "AUTHOR", "STARTED", "TIME SPENT", "COMMENT"}, rows)
 		return nil
