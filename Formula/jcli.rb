@@ -3,30 +3,30 @@
 class Jcli < Formula
   desc "Comprehensive command-line interface for the Jira REST API v2"
   homepage "https://github.com/steveohara/jcli"
-  version "1.1.0"
+  version "1.2.0"
   license "Apache-2.0"
 
   on_macos do
     on_intel do
-      url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-darwin-amd64.tar.gz"
-      sha256 "72d01b4a8d392334c4169a90b0c9d1d4c70bf884a7c5ea2c437b1b72c7444076"
+      url "https://github.com/steveohara/jcli/releases/download/v1.2.0/jcli-v1.2.0-darwin-amd64.tar.gz"
+      sha256 "02567d2d7f5a941afa0c2ed9409e156268e348c066dba921f3383bbcc7f550fa"
     end
 
     on_arm do
-      url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-darwin-arm64.tar.gz"
-      sha256 "8730f7bf9052662e32cf30916401602ad30169dc68dcde2bf54394a2be325f8e"
+      url "https://github.com/steveohara/jcli/releases/download/v1.2.0/jcli-v1.2.0-darwin-arm64.tar.gz"
+      sha256 "35113db8109444ab72e10cb6000ec6c393f09735783fd633ebb3d40be1fdff6f"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-linux-amd64.tar.gz"
-      sha256 "1d1972a1517a891d335bee479afcfb2368546c15cd79b74b775c4c16b28f4f99"
+      url "https://github.com/steveohara/jcli/releases/download/v1.2.0/jcli-v1.2.0-linux-amd64.tar.gz"
+      sha256 "58f9d24426b304c33b48819d0207b255fcfe971801922fabdbb0cd17af73f129"
     end
 
     on_arm do
-      url "https://github.com/steveohara/jcli/releases/download/v1.1.0/jcli-v1.1.0-linux-arm64.tar.gz"
-      sha256 "c40d8c56e1893942e16f638520d4b83de498df19d82b356a0482dbe4582a92cb"
+      url "https://github.com/steveohara/jcli/releases/download/v1.2.0/jcli-v1.2.0-linux-arm64.tar.gz"
+      sha256 "e9800f2c050370cc2bfd67b7d9c4dcaf22e2c601dd0104147f6b925135c8739f"
     end
   end
 
