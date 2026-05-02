@@ -33,3 +33,6 @@ go.work.sum
 /.idea/
 /jcli.iml
 /bin/jcli
+/bin/jcli-darwin-amd64
+/bin/jcli-linux-amd64
+/bin/jcli-darwin-arm64
