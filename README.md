@@ -67,7 +67,11 @@ Additional capabilities:
 
 ### Homebrew (macOS and Linux)
 
+Because this repository is named `jcli` rather than `homebrew-jcli`, you need
+to add the tap explicitly before installing:
+
 ```bash
+brew tap steveohara/jcli https://github.com/steveohara/jcli
 brew install steveohara/jcli/jcli
 ```
 
