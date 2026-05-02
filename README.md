@@ -827,6 +827,193 @@ jcli meta fields
 jcli meta fields --output json
 ```
 
+#### `jcli meta field-search` _(Jira Cloud only)_
+
+Search field definitions with filtering and pagination. Returns richer metadata
+than `meta fields` including description, searcher key, and usage counts.
+
+> **Note:** Uses `GET /rest/api/2/field/search` which is **not available on
+> Jira Server / Data Center** (returns HTTP 404). Use `jcli meta fields` instead.
+
+```
+API: GET /rest/api/2/field/search  (Cloud only)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--id` | Filter by field ID (repeatable) |
+| `--query` | Filter by name/description substring |
+| `--type` | Filter by type: `system` or `custom` |
+| `--order-by` | Order by: `name`, `screensCount`, `contextsCount`, `projectsCount`, `lastUsed` |
+| `--expand` | Include extra data (comma-separated): `screensCount`, `contextsCount`, `lastUsed` |
+| `--project-ids` | Filter to fields used in specific project IDs |
+| `--start-at` | Pagination offset (default: 0) |
+| `--max-results` | Page size (default: 50) |
+
+```bash
+jcli meta field-search
+jcli meta field-search --type custom
+jcli meta field-search --query "sprint" --output json
+jcli meta field-search --id customfield_10014 --expand screensCount,contextsCount
+jcli meta field-search --order-by name --max-results 100
+```
+
+#### `jcli meta field-contexts <fieldId>` _(Jira Cloud only)_
+
+List the contexts a custom field is configured in. Contexts determine which
+projects and issue types the field applies to.
+
+> **Note:** Uses `GET /rest/api/2/field/{fieldId}/context` which is **not
+> available on Jira Server / Data Center** (returns HTTP 404).
+
+```
+API: GET /rest/api/2/field/{fieldId}/context  (Cloud only)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--global` | Show only global (all-project) contexts |
+| `--any-issue-type` | Show only contexts that apply to all issue types |
+| `--context-id` | Filter by specific context IDs (repeatable) |
+| `--start-at` | Pagination offset (default: 0) |
+| `--max-results` | Page size (default: 50) |
+
+```bash
+jcli meta field-contexts customfield_10014
+jcli meta field-contexts customfield_10014 --global
+jcli meta field-contexts customfield_10014 --output json
+```
+
+#### `jcli meta field-options <fieldId>` _(Jira Cloud only)_
+
+List the allowed option values for a custom select, radio, or checkbox field.
+This is the primary way to discover valid values before setting a custom field.
+
+> **Note:** Uses `GET /rest/api/2/field/{fieldId}/context/option` which is
+> **not available on Jira Server / Data Center**. Use
+> `jcli meta field-allowed-values --issue <key>` instead.
+
+```
+API: GET /rest/api/2/field/{fieldId}/context/option  (Cloud only)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--context-id` | Limit options to a specific context ID |
+| `--only-options` | Exclude cascading sub-options |
+| `--start-at` | Pagination offset (default: 0) |
+| `--max-results` | Page size (default: 100) |
+
+```bash
+jcli meta field-options customfield_10014
+jcli meta field-options customfield_10014 --context-id 10025
+jcli meta field-options customfield_10014 --only-options --output json
+```
+
+#### `jcli meta field-allowed-values <fieldId>`
+
+List the allowed values for a field using issue edit metadata. Works on both
+Jira Cloud and Jira Server / Data Center. Requires an existing issue key as
+context (Jira derives allowed values per-issue from its workflow state).
+
+```
+API: GET /rest/api/2/issue/{issueKey}/editmeta
+```
+
+| Flag | Description |
+|------|-------------|
+| `--issue` | Issue key to read edit metadata from (required) |
+
+```bash
+jcli meta field-allowed-values assignee --issue PROJ-123
+jcli meta field-allowed-values customfield_10014 --issue PROJ-123 --output json
+```
+
+---
+
+#### `jcli meta resolutions`
+
+List all resolution values. Use the `NAME` column for `--resolution` in
+`jcli issue transition apply`.
+
+```
+API: GET /rest/api/2/resolution
+```
+
+```bash
+jcli meta resolutions
+jcli meta resolutions --output json
+```
+
+---
+
+#### `jcli meta server-info`
+
+Show version and build information for the connected Jira instance, including
+`deploymentType` (Cloud vs Server).
+
+```
+API: GET /rest/api/2/serverInfo
+```
+
+```bash
+jcli meta server-info
+jcli meta server-info --output json
+```
+
+---
+
+#### `jcli meta project-statuses <project-key>`
+
+List workflow statuses available in a project, grouped by issue type. More
+precise than `jcli meta statuses` which lists all instance-level statuses.
+
+```
+API: GET /rest/api/2/project/{projectIdOrKey}/statuses
+```
+
+| Flag | Description |
+|------|-------------|
+| `--issue-type` | Filter output to a specific issue type name |
+
+```bash
+jcli meta project-statuses PROJ
+jcli meta project-statuses PROJ --issue-type Bug
+jcli meta project-statuses PROJ --output json
+```
+
+---
+
+#### `jcli meta link-types`
+
+List all issue link type definitions. Use the `NAME` column for
+`--type` in `jcli issue link create`.
+
+```
+API: GET /rest/api/2/issueLinkType
+```
+
+```bash
+jcli meta link-types
+jcli meta link-types --output json
+```
+
+---
+
+#### `jcli meta configuration`
+
+Show instance-level feature flags (voting, watching, issue linking, sub-tasks,
+attachments, time tracking) and time-tracking unit settings.
+
+```
+API: GET /rest/api/2/configuration
+```
+
+```bash
+jcli meta configuration
+jcli meta configuration --output json
+```
+
 ---
 
 ## Output Formats

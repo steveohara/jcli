@@ -1185,12 +1185,20 @@ func (c *Client) GetPriorities(ctx context.Context) ([]Priority, error) {
 // Statuses – /rest/api/2/status
 // -----------------------------------------------------------------------
 
+// StatusCategory is the category of a Jira status. Its id field is a number
+// in the REST API response (unlike most other id fields which are strings).
+type StatusCategory struct {
+	ID   int    `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
 // Status represents a Jira issue status.
 type Status struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Category    NamedObj `json:"statusCategory"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Category    StatusCategory `json:"statusCategory"`
 }
 
 // GetStatuses returns all issue statuses.
@@ -1222,6 +1230,321 @@ type Field struct {
 func (c *Client) GetFields(ctx context.Context) ([]Field, error) {
 	var fields []Field
 	return fields, c.get(ctx, apiBase+"/field", &fields)
+}
+
+// FieldSearchResult represents an individual field returned by the paginated
+// field search endpoint, which includes additional metadata not available from
+// the simple GET /field endpoint.
+type FieldSearchResult struct {
+	ID            string          `json:"id"`
+	Key           string          `json:"key"`
+	Name          string          `json:"name"`
+	Description   string          `json:"description"`
+	Custom        bool            `json:"custom"`
+	Searchable    bool            `json:"searchable"`
+	Navigable     bool            `json:"navigable"`
+	Orderable     bool            `json:"orderable"`
+	IsLocked      bool            `json:"isLocked"`
+	SearcherKey   string          `json:"searcherKey"`
+	ScreensCount  int             `json:"screensCount"`
+	ContextsCount int             `json:"contextsCount"`
+	ProjectsCount int             `json:"projectsCount"`
+	Schema        json.RawMessage `json:"schema"`
+}
+
+// FieldSearchPage is the paginated response from GET /rest/api/2/field/search.
+type FieldSearchPage struct {
+	Total      int                 `json:"total"`
+	StartAt    int                 `json:"startAt"`
+	MaxResults int                 `json:"maxResults"`
+	IsLast     bool                `json:"isLast"`
+	Values     []FieldSearchResult `json:"values"`
+}
+
+// FieldSearchOptions configures the paginated field search.
+type FieldSearchOptions struct {
+	// IDs filters to specific field IDs.
+	IDs []string
+	// Query filters by name/description substring.
+	Query string
+	// Type filters by field type: "system" or "custom".
+	Type string
+	// OrderBy orders results: "contextsCount", "lastUsed", "name", "screensCount", "projectsCount".
+	OrderBy string
+	// Expand includes additional data: "screensCount", "contextsCount", "lastUsed".
+	Expand string
+	// ProjectIDs filters to fields used in these projects.
+	ProjectIDs []int
+	StartAt    int
+	MaxResults int
+}
+
+// SearchFields returns a paginated list of field definitions.
+//
+// API: GET /rest/api/2/field/search
+func (c *Client) SearchFields(ctx context.Context, opts FieldSearchOptions) (*FieldSearchPage, error) {
+	maxResults := opts.MaxResults
+	if maxResults == 0 {
+		maxResults = 50
+	}
+	params := url.Values{}
+	params.Set("startAt", fmt.Sprintf("%d", opts.StartAt))
+	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
+	for _, id := range opts.IDs {
+		params.Add("id", id)
+	}
+	if opts.Query != "" {
+		params.Set("query", opts.Query)
+	}
+	if opts.Type != "" {
+		params.Set("type", opts.Type)
+	}
+	if opts.OrderBy != "" {
+		params.Set("orderBy", opts.OrderBy)
+	}
+	if opts.Expand != "" {
+		params.Set("expand", opts.Expand)
+	}
+	for _, pid := range opts.ProjectIDs {
+		params.Add("projectIds", fmt.Sprintf("%d", pid))
+	}
+	var page FieldSearchPage
+	return &page, c.get(ctx, buildQuery(apiBase+"/field/search", params), &page)
+}
+
+// FieldContext represents a custom field context.
+type FieldContext struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	IsGlobalContext bool   `json:"isGlobalContext"`
+	IsAnyIssueType  bool   `json:"isAnyIssueType"`
+}
+
+// FieldContextPage is the paginated response from GET /rest/api/2/field/{fieldId}/context.
+type FieldContextPage struct {
+	Total      int            `json:"total"`
+	StartAt    int            `json:"startAt"`
+	MaxResults int            `json:"maxResults"`
+	IsLast     bool           `json:"isLast"`
+	Values     []FieldContext `json:"values"`
+}
+
+// FieldContextOptions configures the context list request.
+type FieldContextOptions struct {
+	// IsAnyIssueType filters to contexts that apply to all issue types (true) or a subset (false).
+	// nil means no filter.
+	IsAnyIssueType *bool
+	// IsGlobalContext filters to global contexts (true) or project-scoped (false).
+	// nil means no filter.
+	IsGlobalContext *bool
+	// ContextIDs filters to specific context IDs.
+	ContextIDs []int
+	StartAt    int
+	MaxResults int
+}
+
+// GetFieldContexts returns the contexts for a custom field.
+//
+// API: GET /rest/api/2/field/{fieldId}/context
+func (c *Client) GetFieldContexts(ctx context.Context, fieldID string, opts FieldContextOptions) (*FieldContextPage, error) {
+	maxResults := opts.MaxResults
+	if maxResults == 0 {
+		maxResults = 50
+	}
+	params := url.Values{}
+	params.Set("startAt", fmt.Sprintf("%d", opts.StartAt))
+	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
+	if opts.IsAnyIssueType != nil {
+		params.Set("isAnyIssueType", fmt.Sprintf("%v", *opts.IsAnyIssueType))
+	}
+	if opts.IsGlobalContext != nil {
+		params.Set("isGlobalContext", fmt.Sprintf("%v", *opts.IsGlobalContext))
+	}
+	for _, cid := range opts.ContextIDs {
+		params.Add("contextId", fmt.Sprintf("%d", cid))
+	}
+	path := fmt.Sprintf("%s/field/%s/context", apiBase, fieldID)
+	var page FieldContextPage
+	return &page, c.get(ctx, buildQuery(path, params), &page)
+}
+
+// FieldOption represents an option (allowed value) for a custom field.
+type FieldOption struct {
+	ID        string `json:"id"`
+	Value     string `json:"value"`
+	Disabled  bool   `json:"disabled"`
+	ContextID string `json:"contextId,omitempty"`
+}
+
+// FieldOptionPage is the paginated response from the field options endpoint.
+type FieldOptionPage struct {
+	Total      int           `json:"total"`
+	StartAt    int           `json:"startAt"`
+	MaxResults int           `json:"maxResults"`
+	IsLast     bool          `json:"isLast"`
+	Values     []FieldOption `json:"values"`
+}
+
+// GetFieldOptions returns the options (allowed values) for a custom field context.
+//
+// API: GET /rest/api/2/field/{fieldId}/context/option
+func (c *Client) GetFieldOptions(ctx context.Context, fieldID string, contextID string, onlyOptions bool, startAt, maxResults int) (*FieldOptionPage, error) {
+	if maxResults == 0 {
+		maxResults = 100
+	}
+	params := url.Values{}
+	params.Set("startAt", fmt.Sprintf("%d", startAt))
+	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
+	if contextID != "" {
+		params.Add("contextId", contextID)
+	}
+	if onlyOptions {
+		params.Set("onlyOptions", "true")
+	}
+	path := fmt.Sprintf("%s/field/%s/context/option", apiBase, fieldID)
+	var page FieldOptionPage
+	return &page, c.get(ctx, buildQuery(path, params), &page)
+}
+
+// -----------------------------------------------------------------------
+// Edit metadata – /rest/api/2/issue/{issueKey}/editmeta
+// -----------------------------------------------------------------------
+
+// EditMetaAllowedValue is one entry in the allowedValues list for a field.
+// Both select-style fields (value) and object-style fields (name, id) are
+// covered by this struct.
+type EditMetaAllowedValue struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Description string `json:"description"`
+}
+
+// EditMetaField describes a single field as returned by the editmeta endpoint.
+type EditMetaField struct {
+	Required      bool                   `json:"required"`
+	Schema        map[string]interface{} `json:"schema"`
+	Name          string                 `json:"name"`
+	AllowedValues []EditMetaAllowedValue `json:"allowedValues"`
+}
+
+// EditMeta is the response from GET /rest/api/2/issue/{issueKey}/editmeta.
+type EditMeta struct {
+	Fields map[string]EditMetaField `json:"fields"`
+}
+
+// GetEditMeta returns the edit metadata for an existing issue, including the
+// allowed values for each editable field.
+//
+// API: GET /rest/api/2/issue/{issueKey}/editmeta
+// Ref: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issues/#api-rest-api-2-issue-issueidorkey-editmeta-get
+func (c *Client) GetEditMeta(ctx context.Context, issueKey string) (*EditMeta, error) {
+	path := fmt.Sprintf("%s/issue/%s/editmeta", apiBase, issueKey)
+	var meta EditMeta
+	return &meta, c.get(ctx, path, &meta)
+}
+
+// -----------------------------------------------------------------------
+// Resolutions – /rest/api/2/resolution
+// -----------------------------------------------------------------------
+
+// Resolution represents a Jira issue resolution.
+type Resolution struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// GetResolutions returns all resolutions defined on the Jira instance.
+//
+// API: GET /rest/api/2/resolution
+// Works on both Jira Cloud and Jira Server / Data Center.
+func (c *Client) GetResolutions(ctx context.Context) ([]Resolution, error) {
+	var resolutions []Resolution
+	return resolutions, c.get(ctx, apiBase+"/resolution", &resolutions)
+}
+
+// -----------------------------------------------------------------------
+// Server info – /rest/api/2/serverInfo
+// -----------------------------------------------------------------------
+
+// ServerInfo contains build and runtime information about the Jira instance.
+type ServerInfo struct {
+	BaseURL        string `json:"baseUrl"`
+	Version        string `json:"version"`
+	DeploymentType string `json:"deploymentType"`
+	BuildNumber    int    `json:"buildNumber"`
+	BuildDate      string `json:"buildDate"`
+	ServerTime     string `json:"serverTime"`
+	ScmInfo        string `json:"scmInfo"`
+	ServerTitle    string `json:"serverTitle"`
+}
+
+// GetServerInfo returns build and runtime information about the Jira instance.
+//
+// API: GET /rest/api/2/serverInfo
+// Works on both Jira Cloud and Jira Server / Data Center.
+func (c *Client) GetServerInfo(ctx context.Context) (*ServerInfo, error) {
+	var info ServerInfo
+	return &info, c.get(ctx, apiBase+"/serverInfo", &info)
+}
+
+// -----------------------------------------------------------------------
+// Project statuses – /rest/api/2/project/{key}/statuses
+// -----------------------------------------------------------------------
+
+// ProjectIssueTypeStatuses groups the workflow statuses available for one
+// issue type within a project.
+type ProjectIssueTypeStatuses struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Subtask  bool     `json:"subtask"`
+	Statuses []Status `json:"statuses"`
+}
+
+// GetProjectStatuses returns the statuses available for each issue type in
+// the given project.
+//
+// API: GET /rest/api/2/project/{projectIdOrKey}/statuses
+// Works on both Jira Cloud and Jira Server / Data Center.
+func (c *Client) GetProjectStatuses(ctx context.Context, projectKey string) ([]ProjectIssueTypeStatuses, error) {
+	path := fmt.Sprintf("%s/project/%s/statuses", apiBase, projectKey)
+	var result []ProjectIssueTypeStatuses
+	return result, c.get(ctx, path, &result)
+}
+
+// -----------------------------------------------------------------------
+// Instance configuration – /rest/api/2/configuration
+// -----------------------------------------------------------------------
+
+// TimeTrackingConfiguration holds time-tracking settings.
+type TimeTrackingConfiguration struct {
+	WorkingHoursPerDay float64 `json:"workingHoursPerDay"`
+	WorkingDaysPerWeek float64 `json:"workingDaysPerWeek"`
+	TimeFormat         string  `json:"timeFormat"`
+	DefaultUnit        string  `json:"defaultUnit"`
+}
+
+// Configuration holds instance-level feature flags and settings.
+type Configuration struct {
+	VotingEnabled           bool                      `json:"votingEnabled"`
+	WatchingEnabled         bool                      `json:"watchingEnabled"`
+	UnassignedIssuesAllowed bool                      `json:"unassignedIssuesAllowed"`
+	SubTasksEnabled         bool                      `json:"subTasksEnabled"`
+	IssueLinkingEnabled     bool                      `json:"issueLinkingEnabled"`
+	TimeTrackingEnabled     bool                      `json:"timeTrackingEnabled"`
+	AttachmentsEnabled      bool                      `json:"attachmentsEnabled"`
+	TimeTracking            TimeTrackingConfiguration `json:"timeTrackingConfiguration"`
+}
+
+// GetConfiguration returns the instance-level configuration flags.
+//
+// API: GET /rest/api/2/configuration
+// Works on both Jira Cloud and Jira Server / Data Center.
+func (c *Client) GetConfiguration(ctx context.Context) (*Configuration, error) {
+	var cfg Configuration
+	return &cfg, c.get(ctx, apiBase+"/configuration", &cfg)
 }
 
 // -----------------------------------------------------------------------

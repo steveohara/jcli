@@ -434,6 +434,111 @@ To discover what custom fields an issue actually has populated:
 jcli issue get PROJ-42 --output json
 ```
 
+### Field search (paginated, with extra metadata) — Cloud only
+
+> **Not available on Jira Server / Data Center** (returns HTTP 404). Use `meta fields` instead.
+
+```bash
+jcli meta field-search
+jcli meta field-search --type custom
+jcli meta field-search --query "sprint" --output json
+jcli meta field-search --id customfield_10014 --expand screensCount,contextsCount
+jcli meta field-search --order-by name --max-results 100
+```
+
+Returns richer information than `meta fields`: description, searcher key, screens count,
+contexts count. Supports `--type system|custom`, `--query`, `--id`, `--order-by`,
+`--expand`, `--project-ids`, and pagination via `--start-at`/`--max-results`.
+
+### Field contexts — Cloud only
+
+> **Not available on Jira Server / Data Center** (returns HTTP 404).
+
+List the contexts a custom field is configured in (determines which projects/issue types
+it applies to):
+
+```bash
+jcli meta field-contexts customfield_10014
+jcli meta field-contexts customfield_10014 --global          # global contexts only
+jcli meta field-contexts customfield_10014 --any-issue-type  # contexts for all issue types
+jcli meta field-contexts customfield_10014 --output json
+```
+
+Flags: `--global`, `--any-issue-type`, `--context-id` (repeatable), `--start-at`, `--max-results`.
+
+### Field options (allowed values) — Cloud only
+
+> **Not available on Jira Server / Data Center**. Use `meta field-allowed-values` instead.
+
+List the selectable options for a custom select/radio/checkbox field:
+
+```bash
+jcli meta field-options customfield_10014
+jcli meta field-options customfield_10014 --context-id 10025  # scope to a context
+jcli meta field-options customfield_10014 --only-options      # exclude cascading sub-options
+jcli meta field-options customfield_10014 --output json
+```
+
+Flags: `--context-id`, `--only-options`, `--start-at`, `--max-results`.
+
+### Field allowed values (Server + Cloud)
+
+List the allowed values for a specific field using issue edit metadata. Works on
+both Jira Cloud and Jira Server / Data Center. Requires an existing issue key.
+
+```bash
+jcli meta field-allowed-values assignee --issue PROJ-123
+jcli meta field-allowed-values customfield_10014 --issue PROJ-123 --output json
+```
+
+### Resolutions
+
+List all resolution values. Use `NAME` for `--resolution` in `jcli issue transition apply`.
+
+```bash
+jcli meta resolutions
+jcli meta resolutions --output json
+```
+
+### Server info
+
+Display build and version information for the connected Jira instance, including
+`deploymentType` (Cloud vs Server):
+
+```bash
+jcli meta server-info
+jcli meta server-info --output json
+```
+
+### Project statuses
+
+List workflow statuses available within a specific project, grouped by issue type.
+More precise than `jcli meta statuses` which lists all instance-level statuses.
+
+```bash
+jcli meta project-statuses PROJ
+jcli meta project-statuses PROJ --issue-type Bug   # filter to one issue type
+jcli meta project-statuses PROJ --output json
+```
+
+### Issue link types
+
+List all link type definitions. Use `NAME` for `--type` in `jcli issue link create`.
+
+```bash
+jcli meta link-types
+jcli meta link-types --output json
+```
+
+### Instance configuration
+
+Show global feature flags and time-tracking settings for the Jira instance:
+
+```bash
+jcli meta configuration
+jcli meta configuration --output json
+```
+
 ---
 
 ## Common Workflows
