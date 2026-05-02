@@ -29,6 +29,8 @@ var RootCmd = &cobra.Command{
 			fmt.Println(version.Info())
 			return nil
 		}
+		fmt.Println(version.Info())
+		fmt.Println()
 		return cmd.Help()
 	},
 }

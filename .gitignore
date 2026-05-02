@@ -36,3 +36,6 @@ go.work.sum
 /bin/jcli-darwin-amd64
 /bin/jcli-linux-amd64
 /bin/jcli-darwin-arm64
+
+# Release tarballs and cross-compiled binaries
+/dist/
