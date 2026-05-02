@@ -24,6 +24,7 @@ The board and sprint commands use the Jira Agile REST API:
 API reference: https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/`,
 }
 
+// init registers all board sub-commands on BoardCmd.
 func init() {
 	BoardCmd.AddCommand(
 		listCmd,
@@ -35,6 +36,7 @@ func init() {
 // board list
 // -----------------------------------------------------------------------
 
+// listProject filters boards by project key; listMaxResults caps the result count.
 var (
 	listProject    string
 	listMaxResults int
@@ -81,6 +83,7 @@ Examples:
 	},
 }
 
+// init registers flags for listCmd.
 func init() {
 	listCmd.Flags().StringVar(&listProject, "project", "",
 		"Filter boards by project key (overrides default project)")
@@ -105,6 +108,8 @@ API reference: https://developer.atlassian.com/cloud/jira/software/rest/api-grou
 // board sprint list
 // -----------------------------------------------------------------------
 
+// sprintBoardID identifies the board whose sprints are to be listed.
+// sprintState optionally filters by sprint state: active, future, or closed.
 var (
 	sprintBoardID int
 	sprintState   string
@@ -152,6 +157,7 @@ Examples:
 	},
 }
 
+// init registers flags for sprintListCmd.
 func init() {
 	sprintListCmd.Flags().IntVar(&sprintBoardID, "board-id", 0, "Board ID (required)")
 	_ = sprintListCmd.MarkFlagRequired("board-id")
@@ -163,6 +169,7 @@ func init() {
 // board sprint create
 // -----------------------------------------------------------------------
 
+// sprintCreateName through sprintCreateBoardID are the flag variables for "board sprint create".
 var (
 	sprintCreateName      string
 	sprintCreateGoal      string
@@ -202,6 +209,7 @@ Examples:
 	},
 }
 
+// init registers flags for sprintCreateCmd.
 func init() {
 	sprintCreateCmd.Flags().IntVar(&sprintCreateBoardID, "board-id", 0, "Board ID to create the sprint on (required)")
 	_ = sprintCreateCmd.MarkFlagRequired("board-id")
@@ -216,6 +224,7 @@ func init() {
 // board sprint update
 // -----------------------------------------------------------------------
 
+// sprintUpdateID through sprintUpdateEnd are the flag variables for "board sprint update".
 var (
 	sprintUpdateID    int
 	sprintUpdateName  string
@@ -267,6 +276,7 @@ Examples:
 	},
 }
 
+// init registers flags for sprintUpdateCmd.
 func init() {
 	sprintUpdateCmd.Flags().IntVar(&sprintUpdateID, "id", 0, "Sprint ID to update (required)")
 	_ = sprintUpdateCmd.MarkFlagRequired("id")
@@ -282,6 +292,7 @@ func init() {
 // board sprint issues
 // -----------------------------------------------------------------------
 
+// sprintIssuesID is the sprint ID whose issues are to be listed.
 var sprintIssuesID int
 
 var sprintIssuesCmd = &cobra.Command{
@@ -324,6 +335,7 @@ Example:
 	},
 }
 
+// init registers flags for sprintIssuesCmd and wires all sprint sub-commands onto sprintCmd.
 func init() {
 	sprintIssuesCmd.Flags().IntVar(&sprintIssuesID, "id", 0, "Sprint ID (required)")
 	_ = sprintIssuesCmd.MarkFlagRequired("id")

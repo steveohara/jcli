@@ -19,6 +19,9 @@ import (
 	"github.com/steveohara/jcli/cmd/user"
 )
 
+// main is the binary entry point. It registers all top-level sub-command groups
+// onto the root Cobra command and then hands control to Execute, which parses
+// os.Args and dispatches to the appropriate RunE handler.
 func main() {
 	// Register all top-level sub-commands
 	cmd.RootCmd.AddCommand(

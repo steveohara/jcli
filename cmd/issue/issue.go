@@ -24,6 +24,7 @@ watchers.
 API reference: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issues/`,
 }
 
+// init registers all issue sub-commands on IssueCmd.
 func init() {
 	IssueCmd.AddCommand(
 		getCmd,
@@ -46,6 +47,7 @@ func init() {
 // issue get
 
 // issueKVRow maps a Jira field ID to a KV table label and value extractor.
+// It is used to build the key/value display for "issue get" output.
 type issueKVRow struct {
 	field   string
 	label   string
@@ -82,6 +84,7 @@ var allIssueKVRows = []issueKVRow{
 }
 
 // issueColumn maps a Jira field ID to a search results table column header and extractor.
+// It is used to build the column set for "issue search" table output.
 type issueColumn struct {
 	field   string
 	header  string
@@ -104,6 +107,9 @@ var defaultSearchColumns = []issueColumn{
 
 // -----------------------------------------------------------------------
 
+// getFields and getAllFields are the package-level flag variables for "issue get".
+// getFields holds a comma-separated list of field IDs to display.
+// getAllFields, when true, bypasses omitempty and outputs every field from the raw API response.
 var (
 	getFields    []string
 	getAllFields bool
@@ -188,6 +194,7 @@ Examples:
 	},
 }
 
+// init registers flags for getCmd.
 func init() {
 	getCmd.Flags().StringSliceVar(&getFields, "fields", nil,
 		"Comma-separated list of field IDs to include in the response.\n"+
@@ -200,6 +207,7 @@ func init() {
 // issue create
 // -----------------------------------------------------------------------
 
+// createSummary through createProject are the flag variables for "issue create".
 var (
 	createSummary     string
 	createDescription string
@@ -268,6 +276,7 @@ Examples:
 	},
 }
 
+// init registers flags for createCmd.
 func init() {
 	createCmd.Flags().StringVarP(&createSummary, "summary", "s", "", "Issue summary / title (required)")
 	_ = createCmd.MarkFlagRequired("summary")
@@ -287,6 +296,7 @@ func init() {
 // issue update
 // -----------------------------------------------------------------------
 
+// updateSummary through updateLabels are the flag variables for "issue update".
 var (
 	updateSummary     string
 	updateDescription string
@@ -344,6 +354,7 @@ Examples:
 	},
 }
 
+// init registers flags for updateCmd.
 func init() {
 	updateCmd.Flags().StringVarP(&updateSummary, "summary", "s", "", "New summary / title")
 	updateCmd.Flags().StringVarP(&updateDescription, "description", "d", "", "New description body")
@@ -357,6 +368,7 @@ func init() {
 // issue delete
 // -----------------------------------------------------------------------
 
+// deleteSubtasks controls whether sub-tasks are also deleted when an issue is deleted.
 var deleteSubtasks bool
 
 var deleteCmd = &cobra.Command{
@@ -383,6 +395,7 @@ Examples:
 	},
 }
 
+// init registers flags for deleteCmd.
 func init() {
 	deleteCmd.Flags().BoolVar(&deleteSubtasks, "delete-subtasks", false,
 		"Also delete all sub-tasks associated with this issue")
@@ -392,6 +405,10 @@ func init() {
 // issue search
 // -----------------------------------------------------------------------
 
+// searchJQL through searchAllFields are the flag variables for "issue search".
+// searchPage provides a 1-based convenience alias for --start-at.
+// searchAll enables automatic pagination to fetch every matching issue.
+// searchAllFields bypasses omitempty and emits the raw API response bytes per issue.
 var (
 	searchJQL        string
 	searchFields     []string
@@ -547,6 +564,7 @@ Examples:
 	},
 }
 
+// init registers flags for searchCmd.
 func init() {
 	searchCmd.Flags().StringVar(&searchJQL, "jql", "",
 		"JQL query string, e.g. \"project = PROJ AND status = Open\"")
@@ -576,6 +594,8 @@ var commentCmd = &cobra.Command{
 API reference: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-comments/`,
 }
 
+// commentBody holds the text for a new or updated comment.
+// commentIDFlag holds the ID of the comment being updated or deleted.
 var (
 	commentBody   string
 	commentIDFlag string
@@ -680,6 +700,7 @@ Examples:
 	},
 }
 
+// init registers flags for comment sub-commands and wires them onto commentCmd.
 func init() {
 	commentAddCmd.Flags().StringVarP(&commentBody, "body", "b", "", "Comment body text (required)")
 	_ = commentAddCmd.MarkFlagRequired("body")
@@ -739,6 +760,8 @@ Example:
 	},
 }
 
+// transitionID is the workflow transition ID to apply.
+// transitionResolution is an optional resolution name to set when closing an issue.
 var (
 	transitionID         string
 	transitionResolution string
@@ -774,6 +797,7 @@ Examples:
 	},
 }
 
+// init registers flags for transition sub-commands and wires them onto transitionCmd.
 func init() {
 	transitionApplyCmd.Flags().StringVar(&transitionID, "id", "", "Transition ID (required; see 'transition list')")
 	_ = transitionApplyCmd.MarkFlagRequired("id")
@@ -786,6 +810,7 @@ func init() {
 // issue assign
 // -----------------------------------------------------------------------
 
+// assignAccountID is the account ID of the user to assign (or empty to unassign).
 var assignAccountID string
 
 var assignCmd = &cobra.Command{
@@ -816,6 +841,7 @@ Examples:
 	},
 }
 
+// init registers flags for assignCmd.
 func init() {
 	assignCmd.Flags().StringVar(&assignAccountID, "account-id", "",
 		"Account ID of the user to assign (empty string to unassign)")
@@ -867,6 +893,7 @@ Example:
 	},
 }
 
+// worklogTimeSpent through worklogIDFlag are the flag variables for worklog sub-commands.
 var (
 	worklogTimeSpent string
 	worklogStarted   string
@@ -926,6 +953,7 @@ Example:
 	},
 }
 
+// init registers flags for worklog sub-commands and wires them onto worklogCmd.
 func init() {
 	worklogAddCmd.Flags().StringVar(&worklogTimeSpent, "time-spent", "", "Time spent, e.g. \"2h 30m\" (required)")
 	_ = worklogAddCmd.MarkFlagRequired("time-spent")
@@ -1021,6 +1049,7 @@ Example:
 	},
 }
 
+// init registers vote sub-commands on voteCmd.
 func init() {
 	voteCmd.AddCommand(voteGetCmd, voteAddCmd, voteRemoveCmd)
 }
@@ -1068,6 +1097,7 @@ Example:
 	},
 }
 
+// watchAccountID is the account ID of the user to add or remove as a watcher.
 var watchAccountID string
 
 var watchAddCmd = &cobra.Command{
@@ -1112,6 +1142,7 @@ Example:
 	},
 }
 
+// init registers flags for watch sub-commands and wires them onto watchCmd.
 func init() {
 	watchAddCmd.Flags().StringVar(&watchAccountID, "account-id", "", "Account ID of the user to add as watcher (required)")
 	_ = watchAddCmd.MarkFlagRequired("account-id")
@@ -1161,6 +1192,7 @@ Example:
 	},
 }
 
+// linkTypeName through linkIDFlag are the flag variables for link sub-commands.
 var (
 	linkTypeName string
 	linkInward   string
@@ -1212,6 +1244,7 @@ Example:
 	},
 }
 
+// init registers flags for link sub-commands and wires them onto linkCmd.
 func init() {
 	linkCreateCmd.Flags().StringVar(&linkTypeName, "type", "", "Link type name (required; see 'link types')")
 	_ = linkCreateCmd.MarkFlagRequired("type")
@@ -1239,6 +1272,7 @@ var attachCmd = &cobra.Command{
 API reference: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-attachments/`,
 }
 
+// attachFilePath is the local filesystem path of the file to upload.
 var attachFilePath string
 
 var attachAddCmd = &cobra.Command{
@@ -1265,6 +1299,7 @@ Example:
 	},
 }
 
+// attachDeleteID is the attachment ID to delete.
 var attachDeleteID string
 
 var attachDeleteCmd = &cobra.Command{
@@ -1287,6 +1322,7 @@ Example:
 	},
 }
 
+// init registers flags for attach sub-commands and wires them onto attachCmd.
 func init() {
 	attachAddCmd.Flags().StringVar(&attachFilePath, "file", "", "Path to the file to upload (required)")
 	_ = attachAddCmd.MarkFlagRequired("file")
@@ -1301,6 +1337,8 @@ func init() {
 // Helpers
 // -----------------------------------------------------------------------
 
+// firstNonEmpty returns the first non-empty string from the provided values.
+// It is used to apply a precedence chain, e.g. CLI flag → config default.
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {

@@ -21,6 +21,7 @@ along with managing their versions and components.
 API reference: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-projects/`,
 }
 
+// init registers all project sub-commands on ProjectCmd.
 func init() {
 	ProjectCmd.AddCommand(
 		listCmd,
@@ -117,6 +118,7 @@ Examples:
 // project create
 // -----------------------------------------------------------------------
 
+// createKey through createAssignee are the flag variables for "project create".
 var (
 	createKey         string
 	createName        string
@@ -162,6 +164,7 @@ Examples:
 	},
 }
 
+// init registers flags for createCmd.
 func init() {
 	createCmd.Flags().StringVar(&createKey, "key", "", "Project key (unique, uppercase letters, required)")
 	_ = createCmd.MarkFlagRequired("key")
@@ -179,6 +182,7 @@ func init() {
 // project update
 // -----------------------------------------------------------------------
 
+// updateName through updateLead are the flag variables for "project update".
 var (
 	updateName        string
 	updateDescription string
@@ -223,6 +227,7 @@ Examples:
 	},
 }
 
+// init registers flags for updateCmd.
 func init() {
 	updateCmd.Flags().StringVar(&updateName, "name", "", "New project name")
 	updateCmd.Flags().StringVar(&updateDescription, "description", "", "New project description")
@@ -302,6 +307,7 @@ Example:
 	},
 }
 
+// versionName through versionArchived are the flag variables for version sub-commands.
 var (
 	versionName        string
 	versionDescription string
@@ -388,6 +394,7 @@ Example:
 	},
 }
 
+// init registers flags for version sub-commands and wires them onto versionCmd.
 func init() {
 	versionCreateCmd.Flags().StringVar(&versionName, "name", "", "Version name (required)")
 	_ = versionCreateCmd.MarkFlagRequired("name")
@@ -455,6 +462,7 @@ Example:
 	},
 }
 
+// componentName through componentIDFlag are the flag variables for component sub-commands.
 var (
 	componentName        string
 	componentDescription string
@@ -531,6 +539,7 @@ Example:
 	},
 }
 
+// init registers flags for component sub-commands and wires them onto componentCmd.
 func init() {
 	componentCreateCmd.Flags().StringVar(&componentName, "name", "", "Component name (required)")
 	_ = componentCreateCmd.MarkFlagRequired("name")

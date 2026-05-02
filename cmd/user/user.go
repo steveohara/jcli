@@ -20,6 +20,7 @@ authenticated user and searching for users by name or email.
 API reference: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-users/`,
 }
 
+// init registers all user sub-commands on UserCmd.
 func init() {
 	UserCmd.AddCommand(
 		getCmd,
@@ -32,6 +33,7 @@ func init() {
 // user get
 // -----------------------------------------------------------------------
 
+// getAccountID is the account ID flag value for "user get".
 var getAccountID string
 
 var getCmd = &cobra.Command{
@@ -54,6 +56,7 @@ Example:
 	},
 }
 
+// init registers flags for getCmd.
 func init() {
 	getCmd.Flags().StringVar(&getAccountID, "account-id", "", "Account ID of the user to retrieve (required)")
 	_ = getCmd.MarkFlagRequired("account-id")
@@ -87,6 +90,8 @@ Example:
 // user search
 // -----------------------------------------------------------------------
 
+// searchQuery is the name or email string to match against.
+// searchMaxResults caps the number of users returned.
 var (
 	searchQuery      string
 	searchMaxResults int
@@ -122,6 +127,7 @@ Examples:
 	},
 }
 
+// init registers flags for searchCmd.
 func init() {
 	searchCmd.Flags().StringVar(&searchQuery, "query", "", "Name or email to search for (required)")
 	_ = searchCmd.MarkFlagRequired("query")
@@ -133,6 +139,7 @@ func init() {
 // Helpers
 // -----------------------------------------------------------------------
 
+// printUser renders a single user as a KV table or JSON depending on format.
 func printUser(u *client.User, format string) error {
 	p := output.Default(format)
 	if format == output.FormatJSON {
@@ -147,10 +154,10 @@ func printUser(u *client.User, format string) error {
 	return nil
 }
 
+// boolStr converts a bool to a human-readable "yes" / "no" string for table output.
 func boolStr(b bool) string {
 	if b {
 		return "yes"
 	}
 	return "no"
 }
-

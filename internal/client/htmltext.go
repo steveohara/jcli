@@ -130,6 +130,8 @@ func isHTML(contentType string, body []byte) bool {
 		strings.HasPrefix(sniff, "<html")
 }
 
+// min512 returns the length of b capped at 512, used to safely slice a byte
+// slice when sniffing the first few bytes for an HTML signature.
 func min512(b []byte) int {
 	if len(b) < 512 {
 		return len(b)
