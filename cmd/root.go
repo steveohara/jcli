@@ -80,3 +80,18 @@ func Execute() {
 		os.Exit(1)
 	}
 }
+
+// ResetGlobalFlags resets all global flag variables to their zero values.
+// It is intended for use in tests only, where successive Execute() calls
+// would otherwise bleed state from one test into the next.
+func ResetGlobalFlags() {
+	globalFlags.OutputFormat = ""
+	globalFlags.Server = ""
+	globalFlags.Token = ""
+	globalFlags.DefaultProject = ""
+	globalFlags.Insecure = false
+	globalFlags.Verbose = false
+	globalFlags.Debug = false
+	globalFlags.Timeout = 0
+	globalFlags.ConfigFile = ""
+}

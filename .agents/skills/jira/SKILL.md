@@ -182,6 +182,10 @@ Common JQL functions:
 
 ### Create an issue
 
+The convenience flags cover the most common fields. Use `--fields` for anything
+else (including custom fields). `--fields` values override the convenience flags
+when both name the same field.
+
 ```bash
 # Basic task
 jcli issue create --summary "Fix login page"
@@ -193,10 +197,14 @@ jcli issue create --summary "Login page broken" --type Bug --priority High
 jcli issue create --summary "New API endpoint" --type Story --project MYPROJ \
     --description "Implement /api/v2/users endpoint" --labels backend,api
 
-# Sub-task under a parent
+# Sub-task under a parent (Server/DC only)
 jcli issue create --summary "Write unit tests" --type Sub-task --parent PROJ-10
 
-# Full options
+# Link a Story to an Epic (Server/DC: use customfield_10200; Cloud: use --parent)
+jcli issue create --summary "My story" --type Story \
+    --fields '{"customfield_10200": "EPIC-1"}'
+
+# Full convenience flags
 jcli issue create \
     --summary "Implement feature X" \
     --type Story \
@@ -208,14 +216,64 @@ jcli issue create \
     --components "10001,10002" \
     --fix-versions "10010" \
     --due-date "2024-03-15"
+
+# Set custom fields alongside convenience flags
+jcli issue create --summary "Voice outage" --type Bug --priority High \
+    --fields '{"customfield_31004":{"id":"50628"},"customfield_23824":{"id":"36274"}}'
+
+# Attach an entity property
+jcli issue create --summary "Deploy task" \
+    --properties '[{"key":"pipeline.id","value":"build-42"}]'
+
+# Record change history context
+jcli issue create --summary "Auto-created issue" \
+    --history '{"activityDescription":"Created by CI","actor":{"id":"ci-bot","type":"automation"}}'
 ```
+
+**`--fields`** value format by field type:
+
+| Field type | Example |
+|------------|---------|
+| Text | `{"summary": "New title"}` |
+| Named object (priority, issuetype) | `{"priority": {"name": "High"}}` |
+| ID object (assignee, components) | `{"assignee": {"accountId": "abc123"}}` |
+| Select custom field | `{"customfield_31004": {"id": "50628"}}` |
+| Multi-select custom field | `{"customfield_10030": [{"id": "10100"}]}` |
+| Number custom field | `{"customfield_10014": 5}` |
+| Date | `{"duedate": "2024-06-01"}` |
+
+Use `jcli meta fields` to list all field IDs.
+Use `jcli meta field-allowed-values <fieldId> --issue <KEY>` for select option IDs.
+
+**`--properties`** sets entity properties (key/value pairs, not shown in UI):
+`[{"key": "myapp.context", "value": {"buildNumber": 42}}]`
+
+**`--history`** records context in the change history. Common fields:
+
+| Field | Description |
+|-------|-------------|
+| `activityDescription` | Human-readable description of the change activity |
+| `actor` | Who made the change: `{"id":"...","displayName":"CI","type":"automation"}` |
+| `cause` | What triggered the change: `{"id":"deploy-123","type":"deployment"}` |
+| `generator` | System that made the change: `{"id":"jcli","type":"cli"}` |
+| `extraData` | Map of additional key-value pairs: `{"environment":"production"}` |
+| `type` | String type tag for the history entry, e.g. `"madeAutomatically"` |
+| `description` | Long-form description stored in the history entry |
+| `descriptionKey` | i18n key for a localised description string |
+| `emailDescription` | Description included in notification emails |
 
 Issue type names (use `jcli meta issue-types` to see all available):
 `Bug`, `Story`, `Task`, `Sub-task`, `Epic`
 
+> **Epic Link vs `--parent`:** `--parent` is for sub-tasks only (Jira Server/DC).
+> To link a Story to an Epic on Jira Server/Data Center, use `customfield_10200`
+> via `--fields`. On Jira Cloud, use `--parent` with the epic key instead.
+> Check your deployment type with `jcli meta server-info`.
+
 ### Update an issue
 
 Only the flags you provide are sent; other fields are left unchanged.
+`--fields` values override the convenience flags when both name the same field.
 
 ```bash
 jcli issue update PROJ-42 --summary "Updated title"
@@ -223,7 +281,28 @@ jcli issue update PROJ-42 --priority High --assignee "5f0d3aef12345678"
 jcli issue update PROJ-42 --description "New description text"
 jcli issue update PROJ-42 --due-date "2024-04-01"
 jcli issue update PROJ-42 --labels "backend,reviewed"
+
+# Set a custom field
+jcli issue update PROJ-42 --fields '{"customfield_31004":{"id":"50628"}}'
+
+# Mix convenience flags and --fields
+jcli issue update PROJ-42 --priority High \
+    --fields '{"customfield_23824":{"id":"36274"}}'
+
+# Attach an entity property
+jcli issue update PROJ-42 --properties '[{"key":"pipeline.id","value":"build-99"}]'
+
+# Record change history context
+jcli issue update PROJ-42 --summary "Auto-resolved" \
+    --history '{"activityDescription":"Resolved by CI","actor":{"id":"ci-bot","type":"automation"}}'
 ```
+
+See `--fields`, `--properties`, and `--history` descriptions under "Create an issue" above
+-- the format and available fields are identical for both commands.
+
+The convenience flags available on `issue update` are: `--summary`, `--description`,
+`--priority`, `--assignee`, `--due-date`, `--labels`. All other fields (including any
+custom fields) must be set via `--fields`.
 
 ### Delete an issue
 

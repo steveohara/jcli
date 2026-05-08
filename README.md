@@ -279,6 +279,10 @@ Create a new issue in a project.
 API: POST /rest/api/2/issue
 ```
 
+The convenience flags cover the most common fields. Use `--fields` for anything
+else, including custom fields. `--fields` values override the convenience flags
+when both name the same field.
+
 | Flag | Short | Required | Description |
 |------|-------|----------|-------------|
 | `--summary` | `-s` | ✓ | Issue title |
@@ -291,20 +295,67 @@ API: POST /rest/api/2/issue
 | `--components` | | | Comma-separated component IDs |
 | `--fix-versions` | | | Comma-separated version IDs |
 | `--due-date` | | | Due date (`YYYY-MM-DD`) |
-| `--parent` | | | Parent issue key (for sub-tasks) |
+| `--parent` | | | Parent issue key (for sub-tasks; Jira Server/DC only) |
+| `--fields` | | | JSON object of field IDs to values (see below) |
+| `--properties` | | | JSON array of entity property objects (see below) |
+| `--history` | | | JSON object of change history metadata (see below) |
+
+> **Epic Link vs Parent:** On Jira Server/Data Center, use `--parent` only for
+> sub-tasks. To link a Story (or other issue type) to an Epic, use the
+> `customfield_10200` (Epic Link) field via `--fields`:
+> ```bash
+> jcli issue create --summary "My story" --type Story \
+>     --fields '{"customfield_10200": "PROJ-123"}'
+> ```
+> Jira Cloud replaces Epic Link with a `parent` relationship and does not use
+> `customfield_10200`. Check your instance type with `jcli meta server-info`.
+
+**`--fields`** accepts any field the Jira REST API recognises, keyed by field ID.
+Value format depends on the field type:
+
+| Field type | Example value |
+|------------|---------------|
+| Text | `{"summary": "New title"}` |
+| Named object (priority, issuetype) | `{"priority": {"name": "High"}}` |
+| ID object (assignee, components) | `{"assignee": {"accountId": "abc123"}}` |
+| Select custom field | `{"customfield_31004": {"id": "50628"}}` |
+| Multi-select custom field | `{"customfield_10030": [{"id": "10100"}]}` |
+| Number custom field | `{"customfield_10014": 5}` |
+| Date | `{"duedate": "2024-06-01"}` |
+
+Use `jcli meta fields` to list all field IDs. Use `jcli meta field-allowed-values <fieldId> --issue <KEY>` to find option IDs for select fields.
+
+**`--properties`** sets entity properties on the issue (key/value pairs indexed by Jira but not shown in the UI):
+```json
+[{"key": "myapp.context", "value": {"buildNumber": 42}}]
+```
+
+**`--history`** records context in the issue change history. Useful for automated changes:
+```json
+{"activityDescription": "Deployed by CI", "actor": {"id": "ci-bot", "type": "automation"}}
+```
 
 ```bash
 jcli issue create --summary "Login page broken" --type Bug --priority High
 jcli issue create --summary "New API endpoint" --type Story --project MYPROJ \
     --description "Implement /api/v2/users endpoint" --labels backend,api
 jcli issue create --summary "Write unit tests" --type Sub-task --parent PROJ-10
+
+# Set custom fields alongside convenience flags
+jcli issue create --summary "Voice outage" --type Bug --priority High \
+    --fields '{"customfield_31004":{"id":"50628"},"customfield_23824":{"id":"36274"}}'
+
+# Attach an entity property
+jcli issue create --summary "Deploy task" \
+    --properties '[{"key":"pipeline.id","value":"build-42"}]'
 ```
 
 ---
 
 #### `jcli issue update <issue-key>`
 
-Update one or more fields of an existing issue.
+Update one or more fields of an existing issue. Only the flags you provide are
+sent to the API; all other fields are left unchanged.
 
 ```
 API: PUT /rest/api/2/issue/{issueIdOrKey}
@@ -318,10 +369,24 @@ API: PUT /rest/api/2/issue/{issueIdOrKey}
 | `--assignee` | | New assignee account ID |
 | `--due-date` | | New due date (`YYYY-MM-DD`) |
 | `--labels` | | Replace labels (comma-separated) |
+| `--fields` | | JSON object of field IDs to values (same format as `issue create`) |
+| `--properties` | | JSON array of entity property objects |
+| `--history` | | JSON object of change history metadata |
 
 ```bash
 jcli issue update PROJ-42 --summary "Updated title"
 jcli issue update PROJ-42 --priority High --assignee "5f0d3aef12345678"
+
+# Set a custom field
+jcli issue update PROJ-42 --fields '{"customfield_31004":{"id":"50628"}}'
+
+# Mix convenience flags and --fields
+jcli issue update PROJ-42 --priority High \
+    --fields '{"customfield_23824":{"id":"36274"}}'
+
+# Record change history context
+jcli issue update PROJ-42 --summary "Auto-resolved" \
+    --history '{"activityDescription":"Resolved by CI","actor":{"id":"ci-bot","type":"automation"}}'
 ```
 
 ---

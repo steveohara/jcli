@@ -207,7 +207,7 @@ func init() {
 // issue create
 // -----------------------------------------------------------------------
 
-// createSummary through createProject are the flag variables for "issue create".
+// createSummary through createHistory are the flag variables for "issue create".
 var (
 	createSummary     string
 	createDescription string
@@ -220,7 +220,72 @@ var (
 	createDueDate     string
 	createParent      string
 	createProject     string
+	createFields      string
+	createProperties  string
+	createHistory     string
 )
+
+// fieldsHelp is the shared help text for the --fields flag used on both
+// issue create and issue update.
+const fieldsHelp = `JSON object of field IDs to values sent in the "fields" object of the
+request body. Accepts any field the Jira REST API recognises, including
+system fields and custom fields (customfield_XXXXX). Values must match
+the shape the API expects for that field type:
+
+  Text / string field:
+    {"summary": "New title"}
+
+  Named-object field (priority, issuetype, resolution, status):
+    {"priority": {"name": "High"}}
+
+  ID-object field (assignee on Cloud, components, fixVersions):
+    {"assignee": {"accountId": "5f0d3aef12345678"}}
+    {"components": [{"id": "10001"}]}
+
+  Select / radio custom field (use option ID from field-allowed-values):
+    {"customfield_31004": {"id": "50628"}}
+
+  Multi-select custom field:
+    {"customfield_10030": [{"id": "10100"}, {"id": "10101"}]}
+
+  Number custom field:
+    {"customfield_10014": 5}
+
+  Date field:
+    {"duedate": "2024-06-01"}
+
+Use 'jcli meta fields' to list all field IDs and types.
+Use 'jcli meta field-allowed-values <fieldId> --issue <KEY>' for option IDs.
+Values in --fields override the equivalent named flags (e.g. --priority).`
+
+// propertiesHelp is the shared help text for the --properties flag.
+const propertiesHelp = `JSON array of entity property objects to attach to the issue.
+Each element must have a "key" string and a "value" (any JSON value):
+  [{"key": "myapp.context", "value": {"buildNumber": 42}}]
+Properties are indexed and searchable via the Jira REST API but are not
+visible in the Jira UI by default.`
+
+// historyHelp is the help text for the --history flag.
+const historyHelp = `JSON object written to the issue change history to record context about
+who or what triggered the change. Useful when making changes on behalf of
+a user or an automated system. Common fields:
+
+  activityDescription  Human-readable description of the change activity.
+  actor                Object identifying who made the change:
+                         {"id": "...", "displayName": "CI Pipeline", "type": "automation"}
+  cause                Object describing what caused the change:
+                         {"id": "deploy-123", "type": "deployment"}
+  description          Long-form description stored in the history entry.
+  descriptionKey       i18n key for a localised description string.
+  emailDescription     Description included in notification emails.
+  extraData            Map of additional key-value pairs to store:
+                         {"environment": "production", "version": "2.1.0"}
+  generator            Object describing the system that made the change:
+                         {"id": "jcli", "type": "cli"}
+  type                 String type tag for the history entry (e.g. "madeAutomatically").
+
+Example:
+  --history '{"activityDescription":"Automated promotion","actor":{"id":"ci-bot","type":"automation"}}'`
 
 var createCmd = &cobra.Command{
 	Use:   "create",
@@ -230,11 +295,28 @@ var createCmd = &cobra.Command{
 API: POST /rest/api/2/issue
 Ref: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issues/#api-rest-api-2-issue-post
 
+The convenience flags (--summary, --type, --priority, etc.) cover the most
+common fields. For anything else use --fields, which accepts a JSON object
+and is merged with the convenience flags. --fields values override the
+convenience flags when both name the same field.
+
 Examples:
   jcli issue create --summary "Fix login page" --type Bug
   jcli issue create --summary "New feature" --type Story --priority High \
       --description "As a user I want to..." --project MYPROJ
-  jcli issue create --summary "Subtask" --type Sub-task --parent PROJ-10`,
+  jcli issue create --summary "Subtask" --type Sub-task --parent PROJ-10
+
+  # Set custom fields alongside the convenience flags
+  jcli issue create --summary "Voice outage" --type Bug --priority High \
+      --fields '{"customfield_31004":{"id":"50628"},"customfield_23824":{"id":"36274"}}'
+
+  # Override summary and set a custom field entirely through --fields
+  jcli issue create --summary "placeholder" \
+      --fields '{"summary":"Real title","customfield_10014":5}'
+
+  # Attach an entity property
+  jcli issue create --summary "Deploy task" \
+      --properties '[{"key":"pipeline.id","value":"build-42"}]'`,
 	RunE: func(c *cobra.Command, args []string) error {
 		cl, cfg := cmd.NewClient()
 		projectKey := firstNonEmpty(createProject, cfg.DefaultProject)
@@ -266,6 +348,27 @@ Examples:
 		if createParent != "" {
 			req.Fields.Parent = &client.IDObj{Key: createParent}
 		}
+		if createFields != "" {
+			var ef map[string]interface{}
+			if err := json.Unmarshal([]byte(createFields), &ef); err != nil {
+				return fmt.Errorf("invalid --fields JSON: %w", err)
+			}
+			req.ExtraFields = ef
+		}
+		if createProperties != "" {
+			var props []map[string]interface{}
+			if err := json.Unmarshal([]byte(createProperties), &props); err != nil {
+				return fmt.Errorf("invalid --properties JSON: %w", err)
+			}
+			req.Properties = props
+		}
+		if createHistory != "" {
+			var hm map[string]interface{}
+			if err := json.Unmarshal([]byte(createHistory), &hm); err != nil {
+				return fmt.Errorf("invalid --history JSON: %w", err)
+			}
+			req.HistoryMetadata = hm
+		}
 		resp, err := cl.CreateIssue(context.Background(), req)
 		if err != nil {
 			return err
@@ -288,15 +391,18 @@ func init() {
 	createCmd.Flags().StringSliceVar(&createComponents, "components", nil, "Comma-separated list of component IDs")
 	createCmd.Flags().StringSliceVar(&createFixVersions, "fix-versions", nil, "Comma-separated list of fix version IDs")
 	createCmd.Flags().StringVar(&createDueDate, "due-date", "", "Due date in YYYY-MM-DD format")
-	createCmd.Flags().StringVar(&createParent, "parent", "", "Parent issue key for sub-tasks")
+	createCmd.Flags().StringVar(&createParent, "parent", "", "Parent issue key for sub-tasks (Server/DC only; for Epic Link use --fields '{\"customfield_10200\":\"EPIC-1\"}')")
 	createCmd.Flags().StringVar(&createProject, "project", "", "Project key (overrides default)")
+	createCmd.Flags().StringVar(&createFields, "fields", "", fieldsHelp)
+	createCmd.Flags().StringVar(&createProperties, "properties", "", propertiesHelp)
+	createCmd.Flags().StringVar(&createHistory, "history", "", historyHelp)
 }
 
 // -----------------------------------------------------------------------
 // issue update
 // -----------------------------------------------------------------------
 
-// updateSummary through updateLabels are the flag variables for "issue update".
+// updateSummary through updateHistory are the flag variables for "issue update".
 var (
 	updateSummary     string
 	updateDescription string
@@ -304,6 +410,9 @@ var (
 	updateAssignee    string
 	updateDueDate     string
 	updateLabels      []string
+	updateFields      string
+	updateProperties  string
+	updateHistory     string
 )
 
 var updateCmd = &cobra.Command{
@@ -317,9 +426,28 @@ unchanged.
 API: PUT /rest/api/2/issue/{issueIdOrKey}
 Ref: https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issues/#api-rest-api-2-issue-issueidorkey-put
 
+The convenience flags (--summary, --priority, etc.) cover the most common
+fields. For anything else use --fields, which accepts a JSON object that is
+merged with the convenience flags. --fields values override the convenience
+flags when both name the same field.
+
 Examples:
   jcli issue update PROJ-42 --summary "Updated title"
-  jcli issue update PROJ-42 --priority High --assignee "<account-id>"`,
+  jcli issue update PROJ-42 --priority High --assignee "<account-id>"
+
+  # Set a custom field
+  jcli issue update PROJ-42 --fields '{"customfield_31004":{"id":"50628"}}'
+
+  # Mix convenience flags and --fields
+  jcli issue update PROJ-42 --priority High \
+      --fields '{"customfield_23824":{"id":"36274"}}'
+
+  # Attach an entity property
+  jcli issue update PROJ-42 --properties '[{"key":"pipeline.id","value":"build-99"}]'
+
+  # Record change history context
+  jcli issue update PROJ-42 --summary "Auto-resolved" \
+      --history '{"activityDescription":"Resolved by CI","actor":{"id":"ci-bot","type":"automation"}}'`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(c *cobra.Command, args []string) error {
 		cl, _ := cmd.NewClient()
@@ -342,10 +470,33 @@ Examples:
 		if len(updateLabels) > 0 {
 			fields["labels"] = updateLabels
 		}
-		if len(fields) == 0 {
-			return fmt.Errorf("no update fields specified; use --summary, --description, etc.")
+		if updateFields != "" {
+			var ef map[string]interface{}
+			if err := json.Unmarshal([]byte(updateFields), &ef); err != nil {
+				return fmt.Errorf("invalid --fields JSON: %w", err)
+			}
+			for k, v := range ef {
+				fields[k] = v
+			}
 		}
 		req := &client.UpdateIssueRequest{Fields: fields}
+		if updateProperties != "" {
+			var props []map[string]interface{}
+			if err := json.Unmarshal([]byte(updateProperties), &props); err != nil {
+				return fmt.Errorf("invalid --properties JSON: %w", err)
+			}
+			req.Properties = props
+		}
+		if updateHistory != "" {
+			var hm map[string]interface{}
+			if err := json.Unmarshal([]byte(updateHistory), &hm); err != nil {
+				return fmt.Errorf("invalid --history JSON: %w", err)
+			}
+			req.HistoryMetadata = hm
+		}
+		if len(req.Fields) == 0 && len(req.Properties) == 0 && len(req.HistoryMetadata) == 0 {
+			return fmt.Errorf("no update values specified; use --summary, --fields, --properties, or --history")
+		}
 		if err := cl.UpdateIssue(context.Background(), args[0], req); err != nil {
 			return err
 		}
@@ -362,6 +513,9 @@ func init() {
 	updateCmd.Flags().StringVar(&updateAssignee, "assignee", "", "New assignee account ID")
 	updateCmd.Flags().StringVar(&updateDueDate, "due-date", "", "New due date (YYYY-MM-DD)")
 	updateCmd.Flags().StringSliceVar(&updateLabels, "labels", nil, "Replace labels with this comma-separated list")
+	updateCmd.Flags().StringVar(&updateFields, "fields", "", fieldsHelp)
+	updateCmd.Flags().StringVar(&updateProperties, "properties", "", propertiesHelp)
+	updateCmd.Flags().StringVar(&updateHistory, "history", "", historyHelp)
 }
 
 // -----------------------------------------------------------------------

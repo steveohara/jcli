@@ -25,6 +25,7 @@ func TestMain(m *testing.M) {
 // zero / default values so that successive tests do not bleed into each other
 // (pflag does not reset values between Execute() calls).
 func resetCmdFlags() {
+	cmd.ResetGlobalFlags()
 	getFields = nil
 	getAllFields = false
 	searchJQL = ""
@@ -46,12 +47,35 @@ func resetCmdFlags() {
 	createDueDate = ""
 	createParent = ""
 	createProject = ""
+	createFields = ""
+	createProperties = ""
+	createHistory = ""
 	updateSummary = ""
 	updateDescription = ""
 	updatePriority = ""
 	updateAssignee = ""
 	updateDueDate = ""
 	updateLabels = nil
+	updateFields = ""
+	updateProperties = ""
+	updateHistory = ""
+	commentBody = ""
+	commentIDFlag = ""
+	transitionID = ""
+	transitionResolution = ""
+	assignAccountID = ""
+	worklogTimeSpent = ""
+	worklogStarted = ""
+	worklogComment = ""
+	worklogIDFlag = ""
+	watchAccountID = ""
+	linkTypeName = ""
+	linkInward = ""
+	linkOutward = ""
+	linkComment = ""
+	linkIDFlag = ""
+	attachFilePath = ""
+	attachDeleteID = ""
 }
 
 // runCmd executes a jcli command against serverURL, captures stdout, and
@@ -665,5 +689,1129 @@ func TestIssueGetCommand_AllFieldsFlag_NoEffectOnTableOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "PROJ-1") {
 		t.Errorf("table output missing issue key:\n%s", out)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue create -- request body verification
+// -----------------------------------------------------------------------
+
+// captureCreateBody returns a test server that captures the decoded JSON body
+// of the first POST it receives into *body, then responds with a created key.
+func captureCreateBody(t *testing.T, body *map[string]interface{}) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var b map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			*body = b
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1","key":"PROJ-99"}`))
+	}))
+}
+
+// captureUpdateBody returns a test server that captures the decoded JSON body
+// of the first PUT it receives into *body, then responds 204 No Content.
+func captureUpdateBody(t *testing.T, body *map[string]interface{}) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			var b map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			*body = b
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+}
+
+// fieldStr is a helper that returns the nested string value at
+// body["fields"][key], or "" if missing.
+func fieldStr(body map[string]interface{}, key string) string {
+	fields, ok := body["fields"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	v, _ := fields[key].(string)
+	return v
+}
+
+// fieldObj returns body["fields"][key] as a map, or nil.
+func fieldObj(body map[string]interface{}, key string) map[string]interface{} {
+	fields, ok := body["fields"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	v, _ := fields[key].(map[string]interface{})
+	return v
+}
+
+func TestIssueCreateCommand_ConvenienceFlags_SentInBody(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureCreateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "My summary",
+		"--type", "Story",
+		"--priority", "High",
+		"--description", "A description",
+		"--assignee", "user-abc",
+		"--due-date", "2024-06-01",
+		"--labels", "backend,api",
+		"--components", "10001",
+		"--fix-versions", "10010",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if body == nil {
+		t.Fatal("server received no body")
+	}
+	fields, _ := body["fields"].(map[string]interface{})
+	if fields == nil {
+		t.Fatal("body missing 'fields'")
+	}
+
+	cases := []struct {
+		field string
+		check func() bool
+		desc  string
+	}{
+		{"summary", func() bool { return fields["summary"] == "My summary" }, `summary = "My summary"`},
+		{"description", func() bool { return fields["description"] == "A description" }, `description = "A description"`},
+		{"duedate", func() bool { return fields["duedate"] == "2024-06-01" }, `duedate = "2024-06-01"`},
+		{"issuetype", func() bool {
+			obj, _ := fields["issuetype"].(map[string]interface{})
+			return obj != nil && obj["name"] == "Story"
+		}, `issuetype.name = "Story"`},
+		{"priority", func() bool {
+			obj, _ := fields["priority"].(map[string]interface{})
+			return obj != nil && obj["name"] == "High"
+		}, `priority.name = "High"`},
+		{"assignee", func() bool {
+			obj, _ := fields["assignee"].(map[string]interface{})
+			return obj != nil && obj["id"] == "user-abc"
+		}, `assignee.id = "user-abc"`},
+		{"labels", func() bool {
+			arr, _ := fields["labels"].([]interface{})
+			return len(arr) == 2 && arr[0] == "backend" && arr[1] == "api"
+		}, `labels = ["backend","api"]`},
+		{"components", func() bool {
+			arr, _ := fields["components"].([]interface{})
+			if len(arr) != 1 {
+				return false
+			}
+			obj, _ := arr[0].(map[string]interface{})
+			return obj != nil && obj["id"] == "10001"
+		}, `components[0].id = "10001"`},
+		{"fixVersions", func() bool {
+			arr, _ := fields["fixVersions"].([]interface{})
+			if len(arr) != 1 {
+				return false
+			}
+			obj, _ := arr[0].(map[string]interface{})
+			return obj != nil && obj["id"] == "10010"
+		}, `fixVersions[0].id = "10010"`},
+	}
+
+	for _, tc := range cases {
+		if !tc.check() {
+			t.Errorf("field %q: want %s; fields=%v", tc.field, tc.desc, fields)
+		}
+	}
+}
+
+func TestIssueCreateCommand_FieldsFlag_MergedIntoBody(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureCreateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "With fields flag",
+		"--fields", `{"customfield_31004":{"id":"50628"},"customfield_23824":{"id":"36274"}}`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if fieldObj(body, "customfield_31004") == nil {
+		t.Errorf("customfield_31004 missing from fields: %v", body["fields"])
+	}
+	if fieldObj(body, "customfield_23824") == nil {
+		t.Errorf("customfield_23824 missing from fields: %v", body["fields"])
+	}
+	// Typed summary must still be present alongside extra fields.
+	if fieldStr(body, "summary") != "With fields flag" {
+		t.Errorf("summary missing or wrong after --fields merge: %v", body["fields"])
+	}
+}
+
+func TestIssueCreateCommand_FieldsFlag_OverridesConvenienceFlag(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureCreateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "original",
+		"--fields", `{"summary":"overridden"}`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if fieldStr(body, "summary") != "overridden" {
+		t.Errorf("--fields should override --summary; got: %v", body["fields"])
+	}
+}
+
+func TestIssueCreateCommand_PropertiesFlag(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureCreateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "With properties",
+		"--properties", `[{"key":"pipeline.id","value":"build-42"}]`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	props, _ := body["properties"].([]interface{})
+	if len(props) != 1 {
+		t.Fatalf("expected 1 property, got %d: %v", len(props), body)
+	}
+	prop, _ := props[0].(map[string]interface{})
+	if prop["key"] != "pipeline.id" {
+		t.Errorf("property key = %v, want pipeline.id", prop["key"])
+	}
+}
+
+func TestIssueCreateCommand_HistoryFlag(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureCreateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "With history",
+		"--history", `{"activityDescription":"Created by CI","actor":{"id":"ci-bot","type":"automation"}}`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hm, _ := body["historyMetadata"].(map[string]interface{})
+	if hm == nil {
+		t.Fatalf("historyMetadata missing from body: %v", body)
+	}
+	if hm["activityDescription"] != "Created by CI" {
+		t.Errorf("activityDescription = %v, want 'Created by CI'", hm["activityDescription"])
+	}
+	actor, _ := hm["actor"].(map[string]interface{})
+	if actor == nil || actor["id"] != "ci-bot" {
+		t.Errorf("actor.id = %v, want ci-bot", hm["actor"])
+	}
+}
+
+func TestIssueCreateCommand_InvalidFieldsJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"1","key":"PROJ-1"}`))
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "test",
+		"--fields", `{not valid json`,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --fields JSON")
+	}
+	if !strings.Contains(err.Error(), "--fields") {
+		t.Errorf("error should mention --fields: %v", err)
+	}
+}
+
+func TestIssueCreateCommand_InvalidPropertiesJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"1","key":"PROJ-1"}`))
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "test",
+		"--properties", `not-an-array`,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --properties JSON")
+	}
+	if !strings.Contains(err.Error(), "--properties") {
+		t.Errorf("error should mention --properties: %v", err)
+	}
+}
+
+func TestIssueCreateCommand_InvalidHistoryJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"1","key":"PROJ-1"}`))
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "create",
+		"--project", "PROJ",
+		"--summary", "test",
+		"--history", `{bad`,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --history JSON")
+	}
+	if !strings.Contains(err.Error(), "--history") {
+		t.Errorf("error should mention --history: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue update -- request body verification
+// -----------------------------------------------------------------------
+
+func TestIssueUpdateCommand_ConvenienceFlags_SentInBody(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--summary", "Updated title",
+		"--description", "New desc",
+		"--priority", "Low",
+		"--assignee", "user-xyz",
+		"--due-date", "2024-09-01",
+		"--labels", "frontend",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	fields, _ := body["fields"].(map[string]interface{})
+	if fields == nil {
+		t.Fatal("body missing 'fields'")
+	}
+
+	cases := []struct {
+		field string
+		check func() bool
+		desc  string
+	}{
+		{"summary", func() bool { return fields["summary"] == "Updated title" }, `summary = "Updated title"`},
+		{"description", func() bool { return fields["description"] == "New desc" }, `description = "New desc"`},
+		{"duedate", func() bool { return fields["duedate"] == "2024-09-01" }, `duedate = "2024-09-01"`},
+		{"priority", func() bool {
+			obj, _ := fields["priority"].(map[string]interface{})
+			return obj != nil && obj["name"] == "Low"
+		}, `priority.name = "Low"`},
+		{"assignee", func() bool {
+			obj, _ := fields["assignee"].(map[string]interface{})
+			return obj != nil && obj["accountId"] == "user-xyz"
+		}, `assignee.accountId = "user-xyz"`},
+		{"labels", func() bool {
+			arr, _ := fields["labels"].([]interface{})
+			return len(arr) == 1 && arr[0] == "frontend"
+		}, `labels = ["frontend"]`},
+	}
+
+	for _, tc := range cases {
+		if !tc.check() {
+			t.Errorf("field %q: want %s; fields=%v", tc.field, tc.desc, fields)
+		}
+	}
+}
+
+func TestIssueUpdateCommand_FieldsFlag_MergedIntoBody(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--fields", `{"customfield_31004":{"id":"50628"}}`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if fieldObj(body, "customfield_31004") == nil {
+		t.Errorf("customfield_31004 missing from fields: %v", body["fields"])
+	}
+}
+
+func TestIssueUpdateCommand_FieldsFlag_OverridesConvenienceFlag(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--summary", "original",
+		"--fields", `{"summary":"overridden"}`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if fieldStr(body, "summary") != "overridden" {
+		t.Errorf("--fields should override --summary; got: %v", body["fields"])
+	}
+}
+
+func TestIssueUpdateCommand_PropertiesFlag(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--properties", `[{"key":"env","value":"staging"}]`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	props, _ := body["properties"].([]interface{})
+	if len(props) != 1 {
+		t.Fatalf("expected 1 property, got %d: %v", len(props), body)
+	}
+	prop, _ := props[0].(map[string]interface{})
+	if prop["key"] != "env" {
+		t.Errorf("property key = %v, want env", prop["key"])
+	}
+}
+
+func TestIssueUpdateCommand_HistoryFlag(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--summary", "Auto-resolved",
+		"--history", `{"activityDescription":"Resolved by CI","actor":{"id":"ci-bot","type":"automation"}}`,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hm, _ := body["historyMetadata"].(map[string]interface{})
+	if hm == nil {
+		t.Fatalf("historyMetadata missing from body: %v", body)
+	}
+	if hm["activityDescription"] != "Resolved by CI" {
+		t.Errorf("activityDescription = %v, want 'Resolved by CI'", hm["activityDescription"])
+	}
+}
+
+func TestIssueUpdateCommand_NoFlags_StillRequiresAtLeastOne(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1")
+	if err == nil {
+		t.Fatal("expected error when no update flags are provided")
+	}
+}
+
+func TestIssueUpdateCommand_OnlyPropertiesFlag_IsValid(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	// --properties alone (no convenience flags, no --fields) should be accepted.
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--properties", `[{"key":"k","value":"v"}]`,
+	)
+	if err != nil {
+		t.Errorf("expected no error with only --properties; got: %v", err)
+	}
+}
+
+func TestIssueUpdateCommand_OnlyHistoryFlag_IsValid(t *testing.T) {
+	var body map[string]interface{}
+	ts := captureUpdateBody(t, &body)
+	defer ts.Close()
+
+	// --history alone should also be accepted.
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--history", `{"type":"madeAutomatically"}`,
+	)
+	if err != nil {
+		t.Errorf("expected no error with only --history; got: %v", err)
+	}
+}
+
+func TestIssueUpdateCommand_InvalidFieldsJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--fields", `{invalid`,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --fields JSON")
+	}
+	if !strings.Contains(err.Error(), "--fields") {
+		t.Errorf("error should mention --fields: %v", err)
+	}
+}
+
+func TestIssueUpdateCommand_InvalidPropertiesJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--properties", `notjson`,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --properties JSON")
+	}
+	if !strings.Contains(err.Error(), "--properties") {
+		t.Errorf("error should mention --properties: %v", err)
+	}
+}
+
+func TestIssueUpdateCommand_InvalidHistoryJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "update", "PROJ-1",
+		"--history", `{bad`,
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid --history JSON")
+	}
+	if !strings.Contains(err.Error(), "--history") {
+		t.Errorf("error should mention --history: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue delete
+// -----------------------------------------------------------------------
+
+func TestIssueDelete_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "delete", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE method, got: %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "PROJ-1") {
+		t.Errorf("expected PROJ-1 in request path, got: %s", gotPath)
+	}
+}
+
+func TestIssueDelete_WithSubtasks(t *testing.T) {
+	var gotURL string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "delete", "PROJ-2", "--delete-subtasks")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotURL, "deleteSubtasks=true") {
+		t.Errorf("expected deleteSubtasks=true in URL, got: %s", gotURL)
+	}
+}
+
+func TestIssueDelete_NotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errorMessages":["Issue Does Not Exist"],"errors":{}}`))
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "delete", "GONE-1")
+	if err == nil {
+		t.Error("expected error for 404 response")
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue comment
+// -----------------------------------------------------------------------
+
+func TestCommentList_TableOutput(t *testing.T) {
+	body := map[string]interface{}{
+		"comments": []map[string]interface{}{
+			{
+				"id":      "10001",
+				"created": "2024-01-01T10:00:00.000Z",
+				"body":    "First comment",
+				"author":  map[string]string{"displayName": "Alice"},
+			},
+		},
+		"total": 1,
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		data, _ := json.Marshal(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	out, err := runCmd(t, ts.URL, "issue", "comment", "list", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "First comment") {
+		t.Errorf("expected comment body in output, got: %s", out)
+	}
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected author in output, got: %s", out)
+	}
+}
+
+func TestCommentAdd_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		resp := map[string]interface{}{"id": "10002", "body": "Test comment"}
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "comment", "add", "PROJ-1", "--body", "Test comment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBody["body"] != "Test comment" {
+		t.Errorf("expected body in request, got: %v", gotBody["body"])
+	}
+}
+
+func TestCommentUpdate_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		resp := map[string]interface{}{"id": "10001", "body": "Updated comment"}
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "comment", "update", "PROJ-1",
+		"--comment-id", "10001", "--body", "Updated comment")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotPath, "10001") {
+		t.Errorf("expected comment ID in path, got: %s", gotPath)
+	}
+}
+
+func TestCommentDelete_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "comment", "delete", "PROJ-1", "--comment-id", "10001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE method, got: %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "10001") {
+		t.Errorf("expected comment ID in path, got: %s", gotPath)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue transition
+// -----------------------------------------------------------------------
+
+func TestTransitionList_TableOutput(t *testing.T) {
+	body := map[string]interface{}{
+		"transitions": []map[string]interface{}{
+			{"id": "11", "name": "Start Progress", "to": map[string]string{"name": "In Progress"}},
+			{"id": "31", "name": "Done", "to": map[string]string{"name": "Closed"}},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		data, _ := json.Marshal(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	out, err := runCmd(t, ts.URL, "issue", "transition", "list", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Start Progress") {
+		t.Errorf("expected transition name in output, got: %s", out)
+	}
+	if !strings.Contains(out, "In Progress") {
+		t.Errorf("expected target status in output, got: %s", out)
+	}
+}
+
+func TestTransitionApply_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "transition", "apply", "PROJ-1", "--id", "11")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tid, _ := gotBody["transition"].(map[string]interface{})
+	if tid["id"] != "11" {
+		t.Errorf("expected transition id=11 in body, got: %v", gotBody["transition"])
+	}
+}
+
+func TestTransitionApply_WithResolution(t *testing.T) {
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "transition", "apply", "PROJ-1",
+		"--id", "31", "--resolution", "Fixed")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fields, _ := gotBody["fields"].(map[string]interface{})
+	res, _ := fields["resolution"].(map[string]interface{})
+	if res["name"] != "Fixed" {
+		t.Errorf("expected resolution=Fixed in body fields, got: %v", fields)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue assign
+// -----------------------------------------------------------------------
+
+func TestIssueAssign_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "assign", "PROJ-1", "--account-id", "acc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotPath, "PROJ-1") {
+		t.Errorf("expected issue key in path, got: %s", gotPath)
+	}
+	if gotBody["accountId"] != "acc123" {
+		t.Errorf("expected accountId in body, got: %v", gotBody)
+	}
+}
+
+func TestIssueAssign_Unassign(t *testing.T) {
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "assign", "PROJ-1", "--account-id", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// empty account ID should send null
+	if _, hasKey := gotBody["accountId"]; hasKey && gotBody["accountId"] != nil {
+		t.Errorf("expected null accountId for unassign, got: %v", gotBody["accountId"])
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue worklog
+// -----------------------------------------------------------------------
+
+func TestWorklogList_TableOutput(t *testing.T) {
+	body := map[string]interface{}{
+		"worklogs": []map[string]interface{}{
+			{
+				"id":        "10001",
+				"started":   "2024-01-15T09:00:00.000Z",
+				"timeSpent": "2h",
+				"comment":   "Did some work",
+				"author":    map[string]string{"displayName": "Alice"},
+			},
+		},
+		"total": 1,
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		data, _ := json.Marshal(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	out, err := runCmd(t, ts.URL, "issue", "worklog", "list", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "2h") {
+		t.Errorf("expected time spent in output, got: %s", out)
+	}
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected author in output, got: %s", out)
+	}
+}
+
+func TestWorklogAdd_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		resp := map[string]interface{}{"id": "10002", "timeSpent": "2h"}
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "worklog", "add", "PROJ-1",
+		"--time-spent", "2h",
+		"--started", "2024-01-15T09:00:00.000+0000",
+		"--comment", "Fixed the bug",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBody["timeSpent"] != "2h" {
+		t.Errorf("expected timeSpent=2h in body, got: %v", gotBody["timeSpent"])
+	}
+}
+
+func TestWorklogDelete_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "worklog", "delete", "PROJ-1", "--worklog-id", "10001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE method, got: %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "10001") {
+		t.Errorf("expected worklog ID in path, got: %s", gotPath)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue vote
+// -----------------------------------------------------------------------
+
+func TestVoteGet_TableOutput(t *testing.T) {
+	body := map[string]interface{}{"votes": 3, "hasVoted": true}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		data, _ := json.Marshal(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	out, err := runCmd(t, ts.URL, "issue", "vote", "get", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "3") {
+		t.Errorf("expected vote count in output, got: %s", out)
+	}
+}
+
+func TestVoteAdd_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "vote", "add", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("expected POST method, got: %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "votes") {
+		t.Errorf("expected votes endpoint in path, got: %s", gotPath)
+	}
+}
+
+func TestVoteRemove_Success(t *testing.T) {
+	var gotMethod string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "vote", "remove", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE method, got: %s", gotMethod)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue watch
+// -----------------------------------------------------------------------
+
+func TestWatchList_TableOutput(t *testing.T) {
+	body := map[string]interface{}{
+		"watchCount": 2,
+		"watchers": []map[string]interface{}{
+			{"accountId": "acc1", "displayName": "Alice", "emailAddress": "alice@example.com"},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		data, _ := json.Marshal(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	out, err := runCmd(t, ts.URL, "issue", "watch", "list", "PROJ-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Alice") {
+		t.Errorf("expected watcher name in output, got: %s", out)
+	}
+	if !strings.Contains(out, "Watch count: 2") {
+		t.Errorf("expected watch count in output, got: %s", out)
+	}
+}
+
+func TestWatchAdd_Success(t *testing.T) {
+	var gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		gotBody = string(data)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "watch", "add", "PROJ-1", "--account-id", "acc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotBody, "acc123") {
+		t.Errorf("expected account ID in request body, got: %s", gotBody)
+	}
+}
+
+func TestWatchRemove_Success(t *testing.T) {
+	var gotURL string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "watch", "remove", "PROJ-1", "--account-id", "acc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotURL, "acc123") {
+		t.Errorf("expected account ID in request URL, got: %s", gotURL)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue link
+// -----------------------------------------------------------------------
+
+func TestLinkTypes_TableOutput(t *testing.T) {
+	body := map[string]interface{}{
+		"issueLinkTypes": []map[string]interface{}{
+			{"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		data, _ := json.Marshal(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	out, err := runCmd(t, ts.URL, "issue", "link", "types")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Blocks") {
+		t.Errorf("expected link type in output, got: %s", out)
+	}
+}
+
+func TestLinkCreate_Success(t *testing.T) {
+	var gotBody map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "link", "create",
+		"--type", "blocks",
+		"--inward", "PROJ-42",
+		"--outward", "PROJ-50",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	lt, _ := gotBody["type"].(map[string]interface{})
+	if lt["name"] != "blocks" {
+		t.Errorf("expected link type name in body, got: %v", gotBody["type"])
+	}
+}
+
+func TestLinkDelete_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "link", "delete", "--link-id", "10000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE method, got: %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "10000") {
+		t.Errorf("expected link ID in path, got: %s", gotPath)
+	}
+}
+
+// -----------------------------------------------------------------------
+// issue attach
+// -----------------------------------------------------------------------
+
+func TestAttachAdd_Success(t *testing.T) {
+	var gotHeader string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Atlassian-Token")
+		resp := []map[string]interface{}{{"id": "att1", "filename": "test.txt"}}
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	}))
+	defer ts.Close()
+
+	// Create a temporary file to attach
+	f, err := os.CreateTemp("", "attach_test_*.txt")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer os.Remove(f.Name())
+	_, _ = f.WriteString("test content")
+	f.Close()
+
+	_, err = runCmd(t, ts.URL, "issue", "attach", "add", "PROJ-1", "--file", f.Name())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotHeader != "no-check" {
+		t.Errorf("expected X-Atlassian-Token: no-check header, got: %s", gotHeader)
+	}
+}
+
+func TestAttachDelete_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	_, err := runCmd(t, ts.URL, "issue", "attach", "delete", "--attachment-id", "att1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("expected DELETE method, got: %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "att1") {
+		t.Errorf("expected attachment ID in path, got: %s", gotPath)
 	}
 }

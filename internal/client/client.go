@@ -481,23 +481,82 @@ func (c *Client) GetIssue(ctx context.Context, issueKey string, fields []string)
 }
 
 // CreateIssueRequest is the payload for creating a new issue.
+//
+// Fields holds the typed convenience fields (summary, type, priority, etc.).
+// ExtraFields holds any additional field IDs (including custom fields like
+// "customfield_31004") as a JSON object. ExtraFields entries are merged into
+// the "fields" object at marshal time and override typed Fields values when
+// both name the same key.
+//
+// Properties is an optional list of entity properties to set on creation.
+// Each entry must be a {"key": "...", "value": ...} object as required by the
+// Jira REST API.
+//
+// HistoryMetadata is optional context recorded in the issue change history,
+// e.g. to identify the actor and cause of the change.
 type CreateIssueRequest struct {
-	Fields CreateIssueFields `json:"fields"`
+	Fields          CreateIssueFields        `json:"fields"`
+	ExtraFields     map[string]interface{}   `json:"-"`
+	Properties      []map[string]interface{} `json:"properties,omitempty"`
+	HistoryMetadata map[string]interface{}   `json:"historyMetadata,omitempty"`
 }
 
-// CreateIssueFields contains the field values for issue creation.
+// MarshalJSON serialises CreateIssueRequest so that ExtraFields entries are
+// merged into the "fields" object alongside the typed CreateIssueFields, and
+// Properties / HistoryMetadata are included at the top level. This matches the
+// shape expected by POST /rest/api/2/issue.
+func (r CreateIssueRequest) MarshalJSON() ([]byte, error) {
+	// Marshal the typed fields first.
+	fieldsBytes, err := json.Marshal(r.Fields)
+	if err != nil {
+		return nil, fmt.Errorf("marshal issue fields: %w", err)
+	}
+
+	// Decode into a generic map so we can merge extra fields.
+	merged := make(map[string]interface{})
+	if err := json.Unmarshal(fieldsBytes, &merged); err != nil {
+		return nil, fmt.Errorf("unmarshal issue fields for merge: %w", err)
+	}
+	for k, v := range r.ExtraFields {
+		merged[k] = v
+	}
+
+	body := map[string]interface{}{"fields": merged}
+	if len(r.Properties) > 0 {
+		body["properties"] = r.Properties
+	}
+	if len(r.HistoryMetadata) > 0 {
+		body["historyMetadata"] = r.HistoryMetadata
+	}
+	return json.Marshal(body)
+}
+
+// CreateIssueFields contains the typed field values for issue creation.
+// Use CreateIssueRequest.ExtraFields for any field not listed here, including
+// custom fields (e.g. "customfield_31004").
 type CreateIssueFields struct {
-	Project     IDObj     `json:"project"`
-	Summary     string    `json:"summary"`
-	Description string    `json:"description,omitempty"`
-	IssueType   NamedObj  `json:"issuetype"`
-	Priority    *NamedObj `json:"priority,omitempty"`
-	Assignee    *IDObj    `json:"assignee,omitempty"`
-	Labels      []string  `json:"labels,omitempty"`
-	Components  []IDObj   `json:"components,omitempty"`
-	FixVersions []IDObj   `json:"fixVersions,omitempty"`
-	DueDate     string    `json:"duedate,omitempty"`
-	Parent      *IDObj    `json:"parent,omitempty"`
+	// Project is the target project, identified by key.
+	Project IDObj `json:"project"`
+	// Summary is the issue title (required).
+	Summary string `json:"summary"`
+	// Description is the long-form body text of the issue.
+	Description string `json:"description,omitempty"`
+	// IssueType identifies the issue type by name, e.g. "Bug" or "Story".
+	IssueType NamedObj `json:"issuetype"`
+	// Priority sets the issue priority by name, e.g. "High".
+	Priority *NamedObj `json:"priority,omitempty"`
+	// Assignee sets the issue assignee by account ID.
+	Assignee *IDObj `json:"assignee,omitempty"`
+	// Labels is a list of label strings to attach to the issue.
+	Labels []string `json:"labels,omitempty"`
+	// Components is a list of component IDs to associate with the issue.
+	Components []IDObj `json:"components,omitempty"`
+	// FixVersions is a list of version IDs to set as fix versions.
+	FixVersions []IDObj `json:"fixVersions,omitempty"`
+	// DueDate is the due date in YYYY-MM-DD format.
+	DueDate string `json:"duedate,omitempty"`
+	// Parent is the parent issue key, used for sub-tasks.
+	Parent *IDObj `json:"parent,omitempty"`
 }
 
 // IDObj is a simple ID-only reference.
@@ -522,8 +581,19 @@ func (c *Client) CreateIssue(ctx context.Context, req *CreateIssueRequest) (*Cre
 }
 
 // UpdateIssueRequest is the payload for updating an existing issue.
+//
+// Fields is a free-form map of field IDs to values. Both standard fields
+// (e.g. "summary", "priority") and custom fields (e.g. "customfield_31004")
+// may be included.
+//
+// Properties is an optional list of entity properties to set or update.
+// Each entry must be a {"key": "...", "value": ...} object.
+//
+// HistoryMetadata is optional context recorded in the issue change history.
 type UpdateIssueRequest struct {
-	Fields map[string]interface{} `json:"fields"`
+	Fields          map[string]interface{}   `json:"fields,omitempty"`
+	Properties      []map[string]interface{} `json:"properties,omitempty"`
+	HistoryMetadata map[string]interface{}   `json:"historyMetadata,omitempty"`
 }
 
 // UpdateIssue updates an existing Jira issue.
